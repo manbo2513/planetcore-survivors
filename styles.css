@@ -574,6 +574,7 @@ button {
   flex-direction: column;
   width: min(1040px, 100%);
   max-height: 90vh;
+  overflow: hidden;
   padding: clamp(18px, 3vw, 32px);
   border: 1px solid rgba(111, 247, 255, 0.18);
   border-radius: 24px;
@@ -582,6 +583,7 @@ button {
 }
 
 .codex-head {
+  flex: none;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -598,6 +600,7 @@ button {
 }
 
 .codex-tabs {
+  flex: none;
   display: flex;
   gap: 7px;
   margin: 20px 0 16px;
@@ -623,6 +626,8 @@ button {
 }
 
 .codex-body {
+  flex: 1;
+  min-height: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
@@ -1249,6 +1254,33 @@ button {
   color: rgba(143, 166, 196, 0.6);
 }
 
+.reroll-btn {
+  margin-top: 18px;
+  padding: 9px 18px;
+  border: 1px solid rgba(255, 209, 102, 0.42);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(83, 61, 20, 0.5), rgba(20, 35, 60, 0.7));
+  color: #ffe6a8;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.reroll-btn:hover:not(:disabled),
+.reroll-btn:focus-visible:not(:disabled) {
+  border-color: rgba(255, 221, 140, 0.92);
+  box-shadow: 0 0 24px rgba(255, 209, 102, 0.18);
+  outline: none;
+}
+
+.reroll-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .levelup-hint b {
   color: var(--cyan-soft);
 }
@@ -1605,5 +1637,208 @@ button {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* Readability pass */
+
+.menu-copy {
+  font-size: 15px;
+  line-height: 1.9;
+}
+
+.control-chips span {
+  padding: 9px 13px;
+  font-size: 13px;
+}
+
+.eyebrow {
+  font-size: 12px;
+}
+
+.menu-footer,
+.text-btn {
+  font-size: 13px;
+}
+
+.codex-cta {
+  font-size: 13px;
+}
+
+.hud-label {
+  font-size: 11px;
+}
+
+.hud-value {
+  font-size: 12px;
+}
+
+.wave-label {
+  font-size: 11px;
+}
+
+.kill-count {
+  font-size: 13px;
+}
+
+.boss-title {
+  font-size: 12px;
+}
+
+.boss-phase {
+  font-size: 10px;
+}
+
+.event-text {
+  font-size: 11px;
+}
+
+.toast {
+  font-size: 14px;
+}
+
+.tips {
+  font-size: 11px;
+}
+
+.planet-card h3 {
+  font-size: 20px;
+}
+
+.planet-en {
+  font-size: 10px;
+}
+
+.planet-tag {
+  font-size: 11px;
+}
+
+.planet-desc {
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.planet-passive {
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.difficulty-label {
+  font-size: 11px;
+}
+
+.diff-chip {
+  font-size: 13px;
+}
+
+.difficulty-desc {
+  font-size: 12px;
+}
+
+.card h3 {
+  font-size: 21px;
+}
+
+.card p {
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.card-scope,
+.card-req,
+.card-meta {
+  font-size: 11px;
+}
+
+.levelup-sub {
+  font-size: 14px;
+}
+
+.levelup-hint {
+  font-size: 12px;
+}
+
+.reroll-btn {
+  font-size: 13px;
+}
+
+.codex-tab {
+  font-size: 13px;
+}
+
+.codex-card h3 {
+  font-size: 16px;
+}
+
+.codex-meta {
+  font-size: 10px;
+}
+
+.codex-desc {
+  font-size: 13px;
+}
+
+.codex-scope {
+  font-size: 11px;
+}
+
+.codex-tip {
+  font-size: 12px;
+}
+
+.panel-copy {
+  font-size: 15px;
+}
+
+.result-stats span {
+  font-size: 11px;
+}
+
+.result-stats b {
+  font-size: 23px;
+}
+
+@media (max-width: 760px) {
+  .menu-copy {
+    font-size: 14px;
+  }
+
+  .control-chips span {
+    font-size: 12px;
+  }
+
+  .planet-card h3 {
+    font-size: 18px;
+  }
+
+  .planet-desc {
+    font-size: 11px;
+  }
+
+  .planet-passive {
+    font-size: 10px;
+  }
+
+  .card h3 {
+    font-size: 17px;
+  }
+
+  .card p {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .card-scope,
+  .card-req,
+  .card-meta {
+    font-size: 10.5px;
+  }
+
+  .codex-desc {
+    font-size: 12.5px;
+  }
+
+  .codex-tip {
+    font-size: 11.5px;
   }
 }

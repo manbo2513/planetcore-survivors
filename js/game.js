@@ -69,6 +69,7 @@ const el = {
   codexCloseBtn: document.getElementById("codexCloseBtn"),
   levelup: document.getElementById("levelup"),
   cards: document.getElementById("cards"),
+  rerollBtn: document.getElementById("rerollBtn"),
   pause: document.getElementById("pause"),
   resumeBtn: document.getElementById("resumeBtn"),
   pauseSoundBtn: document.getElementById("pauseSoundBtn"),
@@ -109,6 +110,7 @@ let record = loadRecord();
 let gravityHeld = false;
 let lastKey = "";
 let lastError = "";
+let rerollAvailable = true;
 let selectedPlanetId = readStorage("planetcore-last-planet", "earth");
 let selectedDifficultyId = readStorage("planetcore-last-difficulty", "cruise");
 let endlessUnlocked = readStorage("planetcore-endless-unlocked", "") === "1";
@@ -359,7 +361,7 @@ function makePlayer(planet) {
     emergencyWarpMax: 9,
     warpChargesMax: mods.warpChargesMax || 3,
     warpCharges: mods.warpChargesMax || 3,
-    warpRechargeTime: mods.warpRechargeTime || 4,
+    warpRechargeTime: mods.warpRechargeTime || 3,
     warpRecharge: 0,
     warpDamageMult: mods.warpDamageMult || 1,
     eventHorizonMult: mods.eventHorizonMult || 1,
@@ -869,6 +871,7 @@ el.pauseMusicBtn.addEventListener("click", toggleMusic);
 el.codexBtn.addEventListener("click", () => openCodex("menu"));
 el.pauseCodexBtn.addEventListener("click", () => openCodex("pause"));
 el.codexCloseBtn.addEventListener("click", closeCodex);
+el.rerollBtn.addEventListener("click", rerollCards);
 
 window.addEventListener("keydown", (event) => {
   const code = event.code;
@@ -942,6 +945,11 @@ window.addEventListener("keydown", (event) => {
   }
 
   if (state === "levelup") {
+    if (code === "KeyR") {
+      event.preventDefault();
+      rerollCards();
+      return;
+    }
     const match = /^(?:Digit|Numpad)([1-3])$/.exec(code);
     if (match) {
       event.preventDefault();
@@ -3544,6 +3552,7 @@ function showLevelUp() {
   G.flash = Math.max(G.flash, 0.45);
   audio.levelup();
   el.levelup.classList.remove("hidden");
+  rerollAvailable = true;
   renderCards();
 }
 
@@ -3663,6 +3672,15 @@ function renderCards() {
     card.addEventListener("click", () => selectUpgrade(upgrade));
     el.cards.append(card);
   });
+  el.rerollBtn.disabled = !rerollAvailable;
+  el.rerollBtn.textContent = rerollAvailable ? "重掷 · 剩余 1 次" : "本组已重掷";
+}
+
+function rerollCards() {
+  if (state !== "levelup" || !rerollAvailable) return;
+  rerollAvailable = false;
+  audio.ui();
+  renderCards();
 }
 
 function chooseUpgradeByIndex(index) {
@@ -3699,6 +3717,7 @@ function selectUpgrade(upgrade) {
   );
   audio.ui();
   if (G.pendingLevels > 0) {
+    rerollAvailable = true;
     renderCards();
   } else {
     el.levelup.classList.add("hidden");
@@ -4534,7 +4553,7 @@ function drawPlayer() {
     if (ready) {
       ctx.save();
       ctx.fillStyle = "rgba(255, 221, 140, 0.9)";
-      ctx.font = '600 10px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.font = '600 11px "Segoe UI", "Microsoft YaHei", sans-serif';
       ctx.textAlign = "center";
       ctx.fillText("过载", sx, pipY + 13);
       ctx.restore();
@@ -5209,6 +5228,16 @@ function drawBoss(e) {
 
 function drawBullets() {
   ctx.save();
+  ctx.fillStyle = "rgba(4, 8, 18, 0.42)";
+  for (const b of G.bullets) {
+    const sx = w2sX(b.x);
+    const sy = w2sY(b.y);
+    ctx.beginPath();
+    ctx.arc(sx, sy, b.r * 2.25, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.save();
   ctx.globalCompositeOperation = "lighter";
   for (const b of G.bullets) {
     const sx = w2sX(b.x);
@@ -5233,6 +5262,17 @@ function drawBullets() {
 }
 
 function drawEnemyBullets() {
+  ctx.save();
+  ctx.fillStyle = "rgba(8, 2, 14, 0.52)";
+  for (const b of G.enemyBullets) {
+    if (b.captured) continue;
+    const sx = w2sX(b.x);
+    const sy = w2sY(b.y);
+    ctx.beginPath();
+    ctx.arc(sx, sy, b.r * 2.2, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   for (const b of G.enemyBullets) {
@@ -5519,7 +5559,7 @@ function drawWarpHud() {
 
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = '600 10px "Segoe UI", "Microsoft YaHei", sans-serif';
+  ctx.font = '600 11px "Segoe UI", "Microsoft YaHei", sans-serif';
   ctx.fillStyle = ready ? "rgba(165, 250, 255, 0.9)" : "rgba(190, 165, 255, 0.7)";
   ctx.fillText(
     ready
@@ -5920,7 +5960,7 @@ function drawRiftPointer() {
   ctx.restore();
   ctx.save();
   ctx.fillStyle = "rgba(220, 200, 255, 0.8)";
-  ctx.font = '10px "Segoe UI", "Microsoft YaHei", sans-serif';
+  ctx.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
   ctx.textAlign = "center";
   ctx.fillText(rifts.length > 1 ? `裂隙 ×${rifts.length}` : "裂隙", px, py + 24);
   ctx.restore();
