@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#040714" />
+    <meta
+      name="description"
+      content="星核幸存者：你是一颗行星，在深空中自动开火、吸收星尘、进化并击败虚空吞噬者。"
+    />
+    <title>星核幸存者 · Planetcore Survivors</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href="js/game.js" as="script" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <canvas id="game" tabindex="0" aria-label="星核幸存者游戏画面"></canvas>
+
+    <div id="hud" class="hidden" aria-live="off">
+      <div class="hud-top">
+        <div class="status-panel">
+          <div class="hp-row">
+            <span class="hud-label">星核</span>
+            <div class="bar hp-bar">
+              <div id="hpFill" class="bar-fill hp-fill"></div>
+              <div id="shieldFill" class="bar-fill shield-fill"></div>
+            </div>
+            <span id="hpText" class="hud-value">100</span>
+          </div>
+          <div class="xp-row">
+            <span id="levelText" class="level-badge">Lv.1</span>
+            <div class="bar xp-bar"><div id="xpFill" class="bar-fill xp-fill"></div></div>
+          </div>
+          <div class="xp-row gravity-row">
+            <span class="hud-label">引力</span>
+            <div class="bar gravity-bar"><div id="gravityFill" class="bar-fill gravity-fill"></div></div>
+            <span class="hud-value gravity-key">空格</span>
+          </div>
+        </div>
+
+        <div class="timer-panel">
+          <div id="timer" class="timer">00:00</div>
+          <div id="waveLabel" class="wave-label">深空 · 静默</div>
+        </div>
+
+        <div class="stats-panel">
+          <div id="killText" class="kill-count">击杀 0</div>
+          <button id="fullscreenBtn" class="icon-btn" type="button" aria-label="切换全屏">⛶</button>
+          <button id="muteBtn" class="icon-btn" type="button" aria-label="切换声音">🔊</button>
+          <button id="pauseBtn" class="icon-btn" type="button" aria-label="暂停游戏">Ⅱ</button>
+        </div>
+      </div>
+
+      <div id="bossWrap" class="boss-wrap hidden">
+        <div class="boss-title">
+          <span>虚空吞噬者</span>
+          <span id="bossPhase" class="boss-phase">第一阶段</span>
+        </div>
+        <div class="bar boss-bar"><div id="bossFill" class="bar-fill boss-fill"></div></div>
+      </div>
+
+      <div id="eventText" class="event-text hidden"></div>
+      <div id="toast" class="toast" role="status"></div>
+      <div id="tips" class="tips">WASD / 方向键移动 · 按住空格聚怪 · ESC 暂停</div>
+    </div>
+
+    <div id="menu" class="overlay menu-overlay">
+      <div class="menu-inner">
+        <div class="eyebrow">ROGUELITE · DEEP SPACE SURVIVAL</div>
+        <h1 class="game-title">星核幸存者</h1>
+        <div class="title-en">PLANETCORE SURVIVORS</div>
+        <p class="tagline">你是一颗行星。宇宙想吃掉你。</p>
+        <p class="menu-copy">
+          自动开火，吸收星尘，在一次次进化中变成不可吞噬的星核。<br />
+          按住引力场把敌群拉进轨道，松开释放斥力。活过 8 分钟，击碎吞噬者。
+        </p>
+
+        <div class="control-chips">
+          <span><b>WASD / 方向键</b> 移动</span>
+          <span><b>自动</b> 锁定最近敌人</span>
+          <span><b>空格 / 右键</b> 引力场聚怪</span>
+          <span><b>1 / 2 / 3</b> 选择进化</span>
+          <span><b>触屏</b> 左侧拖动移动</span>
+          <span><b>暗星</b> 点击 / Q 跃迁</span>
+        </div>
+
+        <button id="startBtn" class="primary-btn" type="button">
+          <span class="btn-glow"></span>
+          <span>选择星核</span>
+          <small>ENTER / SPACE</small>
+        </button>
+
+        <div class="menu-footer">
+          <span id="recordText">最佳记录：尚无</span>
+          <button id="codexBtn" class="codex-cta" type="button">
+            <span class="codex-cta-icon">✦</span>
+            <span>星海图鉴</span>
+          </button>
+          <button id="menuSoundBtn" class="text-btn" type="button">声音：开</button>
+          <button id="menuMusicBtn" class="text-btn" type="button">音乐：开</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="loadout" class="overlay loadout-overlay hidden">
+      <div class="loadout-inner">
+        <div class="eyebrow">CHOOSE YOUR WORLD</div>
+        <h2>选择你的星核</h2>
+        <p class="loadout-sub">不同的世界，不同的生存方式</p>
+        <div id="planetChoices" class="planet-choices"></div>
+        <div class="difficulty-block">
+          <div class="difficulty-label">深空难度</div>
+          <div id="difficultyChoices" class="difficulty-choices"></div>
+          <div id="difficultyDesc" class="difficulty-desc"></div>
+        </div>
+        <div class="panel-actions loadout-actions">
+          <button id="launchBtn" class="primary-btn small" type="button">进入深空</button>
+          <button id="loadoutBackBtn" class="ghost-btn" type="button">返回标题</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="codex" class="overlay codex-overlay hidden">
+      <div class="codex-inner">
+        <div class="codex-head">
+          <div>
+            <div class="eyebrow">STAR ATLAS</div>
+            <h2>星海图鉴</h2>
+          </div>
+          <button id="codexCloseBtn" class="icon-btn codex-close" type="button" aria-label="关闭图鉴">✕</button>
+        </div>
+        <div id="codexTabs" class="codex-tabs"></div>
+        <div id="codexBody" class="codex-body"></div>
+      </div>
+    </div>
+
+    <div id="levelup" class="overlay levelup-overlay hidden">
+      <div class="levelup-inner">
+        <div class="eyebrow">CORE EVOLUTION</div>
+        <h2>星核进化</h2>
+        <p class="levelup-sub">选择一项强化，继续生存</p>
+        <div id="cards" class="cards"></div>
+        <div class="levelup-hint">按 <b>1</b> / <b>2</b> / <b>3</b> 选择</div>
+      </div>
+    </div>
+
+    <div id="pause" class="overlay pause-overlay hidden">
+      <div class="panel">
+        <div class="eyebrow">SYSTEM HALT</div>
+        <h2>时间已冻结</h2>
+        <p class="panel-copy">星核仍在呼吸，深空也在等你。</p>
+        <div class="panel-actions">
+          <button id="resumeBtn" class="primary-btn small" type="button">继续游戏</button>
+          <button id="pauseSoundBtn" class="secondary-btn" type="button">声音：开</button>
+          <button id="pauseMusicBtn" class="secondary-btn" type="button">音乐：开</button>
+          <button id="pauseCodexBtn" class="secondary-btn" type="button">星海图鉴</button>
+          <button id="pauseRestartBtn" class="secondary-btn" type="button">重新开始</button>
+          <button id="pauseMenuBtn" class="ghost-btn" type="button">返回标题</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="gameover" class="overlay result-overlay hidden">
+      <div class="panel result-panel danger">
+        <div class="eyebrow">SIGNAL LOST</div>
+        <h2>星核熄灭</h2>
+        <p id="gameoverCopy" class="panel-copy">你的光被深空吞没了。</p>
+        <div class="result-stats">
+          <div><span>存活时间</span><b id="goTime">00:00</b></div>
+          <div><span>最终等级</span><b id="goLevel">1</b></div>
+          <div><span>击杀数</span><b id="goKills">0</b></div>
+        </div>
+        <div class="panel-actions">
+          <button id="retryBtn" class="primary-btn small" type="button">再点一次星火</button>
+          <button id="goMenuBtn" class="ghost-btn" type="button">返回标题</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="victory" class="overlay result-overlay hidden">
+      <div class="panel result-panel victory-panel">
+        <div class="eyebrow">CORE PERSISTS</div>
+        <h2>星核永存</h2>
+        <p class="panel-copy">吞噬者碎成了星尘。你的光，成了这片深空的新坐标。</p>
+        <p id="unlockNote" class="unlock-note hidden">无尽深空已解锁 · 回到标题选择新的挑战</p>
+        <div class="result-stats">
+          <div><span>通关时间</span><b id="winTime">00:00</b></div>
+          <div><span>最终等级</span><b id="winLevel">1</b></div>
+          <div><span>击杀数</span><b id="winKills">0</b></div>
+        </div>
+        <div class="panel-actions">
+          <button id="againBtn" class="primary-btn small" type="button">再守一次深空</button>
+          <button id="winMenuBtn" class="ghost-btn" type="button">返回标题</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="rotateHint" class="rotate-hint">
+      <span>把设备横过来，星核会看得更清楚</span>
+    </div>
+
+    <button id="gravityBtn" class="gravity-btn" type="button" aria-label="按住展开引力场">
+      <span>引力</span>
+      <small>HOLD</small>
+    </button>
+
+    <script type="module" src="js/game.js"></script>
+  </body>
+</html>
