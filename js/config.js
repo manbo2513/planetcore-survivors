@@ -32,17 +32,20 @@ export const PLAYER_BASE = {
   gravityChargeSpeed: 1,
   gravityPullMult: 1,
   weapon: "bullets",
-  laserWidth: 14,
+  laserWidth: 18,
   laserChargeTime: 1.22,
   laserDamageMult: 2.75,
   laserBurnLevel: 0,
   laserProgress: 0,
-  laserProgressMax: 4,
+  laserProgressMax: 6,
   laserSalvoBonus: 0,
   summonDamageMult: 1,
   summonFireMult: 1,
   satelliteMax: 0,
-  satelliteInterval: 65,
+  satelliteInterval: 45,
+  satelliteBombDamageMult: 1,
+  satelliteBombRadiusMult: 1,
+  satelliteBombIntervalMult: 1,
   warpChargesMax: 3,
   warpRechargeTime: 4,
   warpDamageMult: 1,
@@ -63,7 +66,7 @@ export const ENEMY_TYPES = {
   comet: {
     radius: 11,
     hp: 21,
-    speed: 152,
+    speed: 165,
     damage: 6,
     xp: 2,
     color: "#7fe8ff",
@@ -176,7 +179,8 @@ export const UPGRADES = [
     id: "damage",
     name: "星核裂变",
     icon: "✦",
-    desc: "子弹伤害提高 22%。",
+    desc: "所有由星核攻击力计算的伤害提高 22%，包括普攻子弹、太阳激光、召唤物、超新星与引力释放。",
+    scope: "普攻 / 激光 / 召唤物 / 超新星 / 引力释放",
     max: 5,
     apply(p) {
       p.damage *= 1.22;
@@ -186,7 +190,8 @@ export const UPGRADES = [
     id: "firerate",
     name: "脉冲超频",
     icon: "⚡",
-    desc: "攻击间隔缩短 15%。",
+    desc: "自身普攻间隔与太阳激光蓄力时间缩短 15%；不影响卫星射速。",
+    scope: "自身普攻 / 太阳激光",
     max: 5,
     apply(p) {
       p.fireInterval *= 0.85;
@@ -197,7 +202,8 @@ export const UPGRADES = [
     id: "multishot",
     name: "双星连射",
     icon: "⊹",
-    desc: "每轮额外发射 1 枚星芒，弹道略微展开。",
+    desc: "每次自身普攻额外发射 1 枚子弹，弹道略微展开；太阳激光与卫星子弹不受影响。",
+    scope: "自身普攻子弹",
     max: 3,
     rare: true,
     planets: ["earth", "jupiter"],
@@ -210,7 +216,9 @@ export const UPGRADES = [
     name: "惯性引擎",
     icon: "➤",
     desc: "移动速度提高 10%，更容易穿过敌群。",
+    scope: "移动（暗星不适用）",
     max: 4,
+    planets: ["earth", "sun", "jupiter"],
     apply(p) {
       p.speed *= 1.1;
     },
@@ -220,6 +228,7 @@ export const UPGRADES = [
     name: "星壳装甲",
     icon: "⬢",
     desc: "最大生命提高 30，并立刻恢复 30 生命。",
+    scope: "全部星球",
     max: 4,
     apply(p) {
       p.maxHp += 30;
@@ -231,6 +240,7 @@ export const UPGRADES = [
     name: "引力透镜",
     icon: "◎",
     desc: "星尘拾取范围扩大 45%，星尘飞向你的速度提高 25%。",
+    scope: "全部星球",
     max: 3,
     apply(p) {
       p.magnet *= 1.45;
@@ -241,7 +251,8 @@ export const UPGRADES = [
     id: "pierce",
     name: "穿透星芒",
     icon: "⌁",
-    desc: "子弹可以额外穿透 1 个敌人。",
+    desc: "自身普攻子弹额外穿透 1 个敌人；卫星子弹和太阳激光不适用。",
+    scope: "自身普攻子弹",
     max: 2,
     planets: ["earth", "jupiter"],
     apply(p) {
@@ -252,7 +263,8 @@ export const UPGRADES = [
     id: "crit",
     name: "暴击星尘",
     icon: "✧",
-    desc: "暴击率提高 10%，暴击造成双倍伤害。",
+    desc: "子弹与激光的暴击率提高 10%，含卫星子弹；不影响冲击波与引力释放。",
+    scope: "子弹 / 激光",
     max: 4,
     apply(p) {
       p.crit += 0.1;
@@ -262,7 +274,8 @@ export const UPGRADES = [
     id: "moon",
     name: "行星环刃",
     icon: "◐",
-    desc: "获得一颗环绕卫星，撞击敌人造成伤害。",
+    desc: "获得一圈环绕环刃，接触敌人造成伤害；与人造卫星是两种独立单位。",
+    scope: "环绕环刃",
     max: 3,
     rare: true,
     apply(p) {
@@ -273,7 +286,8 @@ export const UPGRADES = [
     id: "nova",
     name: "超新星脉冲",
     icon: "◎",
-    desc: "周期性释放冲击波，击退并灼烧周围敌人。",
+    desc: "周期性释放冲击波，击退并灼烧周围敌人；伤害随星核攻击力提高。",
+    scope: "周期冲击波",
     max: 3,
     rare: true,
     apply(p) {
@@ -285,6 +299,7 @@ export const UPGRADES = [
     name: "再生星云",
     icon: "✚",
     desc: "每秒恢复 0.6 生命。",
+    scope: "全部星球",
     max: 3,
     apply(p) {
       p.regen += 0.6;
@@ -294,7 +309,8 @@ export const UPGRADES = [
     id: "size",
     name: "等离子核心",
     icon: "●",
-    desc: "子弹体积提高 18%；太阳的光束宽度同样提高。",
+    desc: "自身普攻子弹体积提高 18%；太阳激光宽度提高 12%。",
+    scope: "自身普攻子弹 / 太阳激光",
     max: 3,
     apply(p) {
       p.bulletRadius *= 1.18;
@@ -306,6 +322,7 @@ export const UPGRADES = [
     name: "相位护盾",
     icon: "⬡",
     desc: "获得 30 点护盾，脱战 5 秒后自动恢复。",
+    scope: "全部星球",
     max: 3,
     rare: true,
     apply(p) {
@@ -317,7 +334,8 @@ export const UPGRADES = [
     id: "singularity",
     name: "奇点引擎",
     icon: "◉",
-    desc: "引力场最大范围 +20%，蓄力速度 +20%，释放伤害 +20%。",
+    desc: "引力场最大范围 +20%，蓄力速度 +20%，释放伤害 +20%；对木星引力流同样生效。",
+    scope: "引力场 / 引力释放",
     max: 2,
     rare: true,
     apply(p) {
@@ -330,7 +348,8 @@ export const UPGRADES = [
     id: "satellite",
     name: "人造卫星网络",
     icon: "🛰",
-    desc: "人造卫星上限 +1，所有召唤物攻击频率 +20%。",
+    desc: "人造卫星上限 +1，月球与人造卫星攻击频率 +20%。",
+    scope: "月球 / 人造卫星",
     max: 2,
     rare: true,
     planets: ["earth"],
@@ -343,7 +362,8 @@ export const UPGRADES = [
     id: "lunar",
     name: "月潮共振",
     icon: "☾",
-    desc: "月球与人造卫星的伤害提高 30%。",
+    desc: "月球与人造卫星的伤害提高 30%，也提高过剩卫星的爆炸伤害。",
+    scope: "月球 / 人造卫星 / 过剩卫星",
     max: 3,
     planets: ["earth"],
     apply(p) {
@@ -351,10 +371,26 @@ export const UPGRADES = [
     },
   },
   {
+    id: "excessSatellite",
+    name: "过剩卫星协议",
+    icon: "☄",
+    desc: "卫星满编后，过剩卫星的引爆伤害 +35%、范围 +20%，发射间隔缩短 10%。",
+    scope: "过剩卫星引爆",
+    max: 2,
+    rare: true,
+    planets: ["earth"],
+    apply(p) {
+      p.satelliteBombDamageMult *= 1.35;
+      p.satelliteBombRadiusMult *= 1.2;
+      p.satelliteBombIntervalMult *= 0.9;
+    },
+  },
+  {
     id: "laserFocus",
     name: "光束聚焦",
     icon: "▮",
-    desc: "蓄力激光宽度 +22%，激光伤害 +18%。",
+    desc: "蓄力激光宽度 +22%，激光伤害 +18%；对过载扇形射击同样生效。",
+    scope: "太阳激光",
     max: 3,
     rare: true,
     planets: ["sun"],
@@ -367,7 +403,8 @@ export const UPGRADES = [
     id: "laserBurn",
     name: "日珥灼烧",
     icon: "☀",
-    desc: "被激光命中的敌人会持续燃烧，叠加提高燃烧伤害。",
+    desc: "被激光命中的敌人会持续燃烧，叠加提高燃烧伤害；不作用于普攻子弹。",
+    scope: "太阳激光命中",
     max: 2,
     rare: true,
     planets: ["sun"],
@@ -379,7 +416,8 @@ export const UPGRADES = [
     id: "gravityWell",
     name: "深空引力",
     icon: "◉",
-    desc: "木星引力场范围 +22%，吸力 +30%。",
+    desc: "木星引力场范围 +22%，吸力 +30%；不影响暗星的事件视界。",
+    scope: "木星引力场",
     max: 2,
     rare: true,
     planets: ["jupiter"],
@@ -393,6 +431,7 @@ export const UPGRADES = [
     name: "潮汐循环",
     icon: "◌",
     desc: "引力能量上限 +25，恢复速度 +30%，释放冷却缩短 15%。",
+    scope: "木星引力场",
     max: 2,
     rare: true,
     planets: ["jupiter"],
@@ -406,7 +445,8 @@ export const UPGRADES = [
     id: "prism",
     name: "分光棱镜",
     icon: "⋔",
-    desc: "过载连续射击额外增加 1 次，激光伤害提高 6%。",
+    desc: "过载扇形射击额外增加 1 条射线，激光伤害提高 6%；每级最多叠加到 8 条。",
+    scope: "太阳过载射击",
     max: 2,
     rare: true,
     planets: ["sun"],
@@ -419,7 +459,8 @@ export const UPGRADES = [
     id: "warpDrive",
     name: "折叠引擎",
     icon: "⇌",
-    desc: "跃迁充能时间缩短 20%，跃迁落点伤害提高 30%。",
+    desc: "跃迁充能时间缩短 20%；落点、路径和持续轨迹伤害提高 30%。",
+    scope: "暗星跃迁",
     max: 2,
     rare: true,
     planets: ["voidstar"],
@@ -432,7 +473,8 @@ export const UPGRADES = [
     id: "eventHorizon",
     name: "事件视界",
     icon: "◯",
-    desc: "事件视界范围与牵引力提高 30%，贴近伤害提高 25%。",
+    desc: "事件视界范围 +30%，杂兵吸力 +30%，精英/Boss 剪切伤害 +30%；不会牵引精英/Boss。",
+    scope: "暗星事件视界",
     max: 2,
     rare: true,
     planets: ["voidstar"],
@@ -441,6 +483,61 @@ export const UPGRADES = [
     },
   },
 ];
+
+export const BREAKTHROUGHS = [
+  {
+    id: "earthArray",
+    name: "月轨炮阵",
+    icon: "✦",
+    planets: ["earth"],
+    breakthrough: true,
+    scope: "月球 / 人造卫星",
+    requirement: { satellite: 1, lunar: 1 },
+    requirementText: "人造卫星网络 Lv1 + 月潮共振 Lv1",
+    desc: "月球和每颗人造卫星每次攻击额外发射 1 枚子弹，召唤物子弹获得 1 次穿透；卫星之间出现轨道连线。",
+    tip: "召唤物流的收束：更多弹丸、更好的穿透，适合在卫星满编后继续堆月潮共振。",
+  },
+  {
+    id: "solarScar",
+    name: "日冕熔线",
+    icon: "▤",
+    planets: ["sun"],
+    breakthrough: true,
+    scope: "太阳激光",
+    requirement: { laserFocus: 1, laserBurn: 1 },
+    requirementText: "光束聚焦 Lv1 + 日珥灼烧 Lv1",
+    desc: "所有激光都会在命中路径上留下持续约 2.2 秒的灼烧轨迹，对经过的敌人持续造成伤害。",
+    tip: "用激光切割出一条燃烧带，再把敌群引进去；宽光束与过载扇形会留下更大的灼烧区域。",
+  },
+  {
+    id: "tidalSingularity",
+    name: "潮汐奇点",
+    icon: "◉",
+    planets: ["jupiter"],
+    breakthrough: true,
+    scope: "木星引力释放",
+    requirement: { gravityWell: 1, nova: 1 },
+    requirementText: "深空引力 Lv1 + 超新星脉冲 Lv1",
+    desc: "引力释放后会在原地留下持续 2.5 秒的奇点，持续牵引敌人，结束时再次爆炸。",
+    tip: "聚怪、拖拽、二次爆炸，适合把敌人压在奇点里再用引力或风暴收尾。",
+  },
+  {
+    id: "foldedHorizon",
+    name: "折叠视界",
+    icon: "⇌",
+    planets: ["voidstar"],
+    breakthrough: true,
+    scope: "暗星跃迁路径",
+    requirement: { warpDrive: 1, eventHorizon: 1 },
+    requirementText: "折叠引擎 Lv1 + 事件视界 Lv1",
+    desc: "跃迁轨迹在 1.2 秒后二次坍缩，对整条路径造成额外伤害，并生成一次空间撕裂冲击。",
+    tip: "三格跃迁可以连续铺设折叠路径；先拉出长线，再让整条路径依次坍缩。",
+  },
+];
+
+export const BREAKTHROUGH_BY_ID = Object.fromEntries(
+  BREAKTHROUGHS.map((breakthrough) => [breakthrough.id, breakthrough]),
+);
 
 export const ENEMY_LORE = {
   asteroid: {
@@ -477,7 +574,7 @@ export const ENEMY_LORE = {
     name: "盾卫",
     threat: "高",
     desc: "正面装有偏转装甲，来自正面的弹丸伤害大幅降低。",
-    tip: "用引力拉扯它转向，或让卫星、超新星从侧面命中。",
+    tip: "盾牌转向有延迟。快速绕到侧后方，或用跃迁/引力改变相对位置，再让卫星、超新星从侧面命中。",
   },
   bomber: {
     name: "自爆孢子",
@@ -519,18 +616,18 @@ export const PLANETS = [
     tag: "卫星召唤",
     icon: "🌍",
     colors: ["#b9ffff", "#5cd6ff", "#2d6ef0", "#091245"],
-    desc: "人类母星。月球先行，随后人造卫星陆续入轨，用一整张轨道火力网替母星清扫深空。",
+    desc: "人类母星。月球先行，人造卫星陆续入轨；满编后，多余的卫星会被直接发射出去引爆。",
     passive: "轨道文明",
     passiveDesc:
-      "开局自带月球；每 62 秒发射一颗人造卫星，最多 4 颗。月球与卫星会自动锁定并攻击敌人。",
+      "开局自带月球；每 45 秒发射一颗人造卫星，最多 5 颗。满编后每 45 秒发射一颗过剩卫星并引爆，造成小范围伤害。",
     modifiers: {
       regen: 0.15,
       gravityRadiusMult: 0.95,
       gravityMax: 1,
       gravityDamageMult: 1,
       summonDamageMult: 1.05,
-      satelliteMax: 4,
-      satelliteInterval: 62,
+      satelliteMax: 5,
+      satelliteInterval: 45,
     },
   },
   {
@@ -541,10 +638,10 @@ export const PLANETS = [
     icon: "☀️",
     colors: ["#fffbe0", "#ffd166", "#ff8a3d", "#7a1d08"],
     weapon: "laser",
-    desc: "把自身点燃的恒星。基础攻击改为蓄力激光；每次开火积攒过载，攒满后下一次攻击会连续速射多道激光。",
+    desc: "把自身点燃的恒星。基础攻击改为蓄力激光；每次开火积攒过载，攒满后下一次攻击会沿单条指示线连续速射多道激光，每发带极小偏角。",
     passive: "日冕过载",
     passiveDesc:
-      "每 4 次激光积攒一次过载，下次攻击沿同一条指示线快速连续射出 3 道激光。伤害 +16%，攻速 +8%，但最大生命 -15%，引力较弱。",
+      "每 6 次激光积攒一次过载，下次攻击以瞄准线为中心、左右各 15° 随机连续射出 6 道激光。伤害 +16%，攻速 +8%，但最大生命 -15%，引力较弱。",
     modifiers: {
       maxHp: 0.85,
       damage: 1.16,
@@ -593,7 +690,7 @@ export const PLANETS = [
     desc: "一颗失去推进能力的暗星。它不靠引擎移动，而是折叠空间：点击或轻触战场即可跃迁。",
     passive: "事件视界",
     passiveDesc:
-      "无法使用 WASD 移动。跃迁可存 3 格，每格 4 秒依次回充；点击/轻触或按 Q 消耗一格跃迁，路径造成伤害并留下轨迹。事件视界牵引杂兵，但对精英/Boss产生斥力与剪切伤害；重质量目标贴近且应急就绪时会自动触发跃迁。",
+      "无法使用 WASD 移动。跃迁可存 3 格，每格 4 秒依次回充；点击/轻触或按 Q 消耗一格跃迁，路径造成伤害并留下轨迹。事件视界只牵引杂兵；精英/Boss不受牵引，但会在外圈被减速并持续受到剪切伤害；重质量目标贴近且应急就绪时会自动触发跃迁。",
     noMove: true,
     modifiers: {
       maxHp: 1.12,
@@ -624,6 +721,9 @@ export const DIFFICULTIES = [
     eliteRate: 0.9,
     bossHp: 0.9,
     xpMult: 1,
+    eventIntervalMult: 1,
+    eventPower: 1,
+    riftCount: 1,
   },
   {
     id: "deep",
@@ -637,6 +737,9 @@ export const DIFFICULTIES = [
     eliteRate: 1.1,
     bossHp: 1.15,
     xpMult: 1.02,
+    eventIntervalMult: 0.88,
+    eventPower: 1.12,
+    riftCount: 2,
   },
   {
     id: "void",
@@ -650,6 +753,9 @@ export const DIFFICULTIES = [
     eliteRate: 1.25,
     bossHp: 1.35,
     xpMult: 1.06,
+    eventIntervalMult: 0.75,
+    eventPower: 1.35,
+    riftCount: 3,
   },
   {
     id: "endless",
@@ -663,6 +769,9 @@ export const DIFFICULTIES = [
     eliteRate: 1.15,
     bossHp: 1.2,
     xpMult: 1.03,
+    eventIntervalMult: 0.82,
+    eventPower: 1.2,
+    riftCount: 2,
     endless: true,
   },
 ];
@@ -697,8 +806,16 @@ export const EVENTS = [
     name: "太阳耀斑",
     icon: "☀",
     color: "#ff8a3d",
-    desc: "恒星风暴横扫战场，清除敌方弹幕并灼烧全场敌人。",
-    tip: "耀斑会伤害所有敌人，适合在敌群最密时触发。",
+    desc: "恒星风暴连续爆发三次，每次清除敌方弹幕并灼烧全场敌人。",
+    tip: "三次爆发会连续削弱敌群，适合在敌群最密时触发。",
+  },
+  {
+    id: "deadline",
+    name: "赤线封锁",
+    icon: "╱",
+    color: "#c23b4a",
+    desc: "暗红色射线在战场中交错亮起，短暂预警后切割经过的区域。",
+    tip: "观察红线预警，提前穿过空隙；暗星可以直接跃迁离开封锁区。",
   },
 ];
 

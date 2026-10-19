@@ -678,6 +678,17 @@ button {
   color: #96adc9;
 }
 
+.codex-scope {
+  margin: -2px 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(143, 166, 196, 0.72);
+}
+
+.codex-scope:empty {
+  display: none;
+}
+
 .codex-tip {
   margin: 0;
   padding-top: 8px;
@@ -1159,6 +1170,43 @@ button {
   font-size: 13px;
   line-height: 1.75;
   color: #93aac6;
+}
+
+.card-scope {
+  margin-top: 8px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(143, 166, 196, 0.72);
+}
+
+.card-scope:empty,
+.card-req:empty {
+  display: none;
+}
+
+.card-req {
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: rgba(255, 209, 102, 0.78);
+}
+
+.card.breakthrough {
+  border-color: rgba(255, 209, 102, 0.88);
+  background:
+    radial-gradient(circle at 18% 8%, rgba(255, 209, 102, 0.2), transparent 48%),
+    linear-gradient(150deg, rgba(56, 43, 18, 0.88), rgba(12, 13, 28, 0.96));
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.45),
+    0 0 32px rgba(255, 209, 102, 0.16);
+}
+
+.card.breakthrough:hover,
+.card.breakthrough:focus-visible {
+  border-color: #ffe6a3;
+  box-shadow:
+    0 28px 74px rgba(0, 0, 0, 0.5),
+    0 0 42px rgba(255, 209, 102, 0.28);
 }
 
 .card-meta {

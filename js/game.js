@@ -1,5 +1,7 @@
 import {
   BOSS_TIME,
+  BREAKTHROUGHS,
+  BREAKTHROUGH_BY_ID,
   DIFFICULTIES,
   DIFFICULTY_BY_ID,
   ENEMY_LORE,
@@ -222,7 +224,7 @@ function writeStorage(key, value) {
 }
 
 function loadCodexProgress() {
-  const empty = { planets: {}, enemies: {}, upgrades: {}, events: {} };
+  const empty = { planets: {}, enemies: {}, upgrades: {}, events: {}, breakthroughs: {} };
   try {
     const parsed = JSON.parse(localStorage.getItem("planetcore-codex") || "null");
     return parsed ? { ...empty, ...parsed } : empty;
@@ -327,6 +329,10 @@ function makePlayer(planet) {
     satelliteMax: mods.satelliteMax || 0,
     satelliteInterval: mods.satelliteInterval || 65,
     satelliteTimer: mods.satelliteMax ? mods.satelliteInterval || 65 : Infinity,
+    satelliteBombDamageMult: mods.satelliteBombDamageMult || 1,
+    satelliteBombRadiusMult: mods.satelliteBombRadiusMult || 1,
+    satelliteBombIntervalMult: mods.satelliteBombIntervalMult || 1,
+    satelliteBombsLaunched: 0,
     summonShots: 0,
     summonDamageMult: mods.summonDamageMult || 1,
     summonFireMult: 1,
@@ -335,7 +341,7 @@ function makePlayer(planet) {
     laserDamageMult: PLAYER_BASE.laserDamageMult,
     laserBurnLevel: 0,
     laserProgress: 0,
-    laserProgressMax: 4,
+    laserProgressMax: 6,
     laserSalvoBonus: 0,
     laserFiringAngles: [],
     laserSalvoActive: false,
@@ -415,6 +421,7 @@ function freshGame(planet, difficulty) {
     xpNext: 7,
     pendingLevels: 0,
     upgradeLevels: {},
+    breakthroughs: {},
     novaTimer: 5.5,
     spawnTimer: 0.9,
     eliteTimer: 55 / (difficulty.eliteRate || 1),
@@ -426,14 +433,25 @@ function freshGame(planet, difficulty) {
     lastWave: "",
     gravityTipShown: false,
     toastUntil: 0,
-    eventTimer: rand(42, 56),
+    eventTimer:
+      rand(36, 48) * (difficulty.eventIntervalMult || 1),
+    meteorWave: 0,
+    meteorWaveTimer: 0,
+    meteorWaveTarget: 0,
+    lineHazards: [],
+    deadlineSpawnTimer: 0,
     hazards: [],
     tideTimer: 0,
     activeEvent: null,
     lastEventId: null,
-    riftEnemy: null,
+    riftEnemies: [],
+    satelliteBombs: [],
+    flarePulsesRemaining: 0,
+    flarePulseTimer: 0,
     warpTrails: [],
     warpGhosts: [],
+    laserScars: [],
+    singularities: [],
     endlessBossKills: 0,
     nextBossIn: 0,
   };
@@ -608,6 +626,7 @@ function renderCodex() {
     ["planets", "星球"],
     ["enemies", "敌人"],
     ["upgrades", "强化"],
+    ["breakthroughs", "突破"],
     ["events", "事件"],
   ];
   el.codexTabs.replaceChildren();
@@ -659,8 +678,24 @@ function renderCodex() {
         name: upgrade.name,
         meta: `${upgrade.rare ? "稀有" : "常规"} · ${planetTag} · 最多 ${upgrade.max} 级`,
         desc: upgrade.desc,
+        scope: upgrade.scope,
         tip: "升级时在三个随机强化中选择；未满级的强化才会再次出现。",
         recorded: Boolean(codexProgress.upgrades?.[upgrade.id]),
+      });
+    }
+  } else if (codexTab === "breakthroughs") {
+    for (const breakthrough of BREAKTHROUGHS) {
+      const planetTag = breakthrough.planets
+        .map((id) => PLANET_BY_ID[id]?.name || id)
+        .join(" / ");
+      addCodexCard({
+        icon: breakthrough.icon,
+        name: breakthrough.name,
+        meta: `${planetTag}专属 · 唯一突破`,
+        desc: breakthrough.desc,
+        scope: breakthrough.scope,
+        tip: `需要：${breakthrough.requirementText}。${breakthrough.tip}`,
+        recorded: Boolean(codexProgress.breakthroughs?.[breakthrough.id]),
       });
     }
   } else {
@@ -677,7 +712,7 @@ function renderCodex() {
   }
 }
 
-function addCodexCard({ icon, name, meta, desc, tip, recorded }) {
+function addCodexCard({ icon, name, meta, desc, scope, tip, recorded }) {
   const card = document.createElement("article");
   card.className = "codex-card";
   const head = document.createElement("div");
@@ -696,13 +731,16 @@ function addCodexCard({ icon, name, meta, desc, tip, recorded }) {
   const descEl = document.createElement("p");
   descEl.className = "codex-desc";
   descEl.textContent = desc;
+  const scopeEl = document.createElement("div");
+  scopeEl.className = "codex-scope";
+  scopeEl.textContent = scope ? `作用：${scope}` : "";
   const tipEl = document.createElement("p");
   tipEl.className = "codex-tip";
   tipEl.textContent = tip;
   const badge = document.createElement("span");
   badge.className = `codex-recorded${recorded ? "" : " undiscovered"}`;
   badge.textContent = recorded ? "已记录" : "未记录";
-  card.append(head, descEl, tipEl, badge);
+  card.append(head, descEl, scopeEl, tipEl, badge);
   el.codexBody.append(card);
 }
 
@@ -1085,10 +1123,13 @@ function updateGame(dt) {
   updateEvents(dt);
   updatePlanetPassive(dt);
   updateWarpEffects(dt);
+  updateLaserScars(dt);
+  updateSingularities(dt);
   updateSpawning(dt);
   updateEnemies(dt);
   updatePlayerWeapons(dt);
   updateSummons(dt);
+  updateSatelliteBombs(dt);
   updateBullets(dt);
   updateEnemyBullets(dt);
   updateGems(dt);
@@ -1254,6 +1295,7 @@ function spawnEnemy(type, x = null, y = null, options = {}) {
     splitter: Boolean(def.split),
     shooter: Boolean(def.shooter),
     shielded: Boolean(def.shielded),
+    facing: 0,
     bomber: Boolean(def.bomber),
     priest: Boolean(def.priest),
     portal: Boolean(def.portal),
@@ -1281,6 +1323,9 @@ function spawnEnemy(type, x = null, y = null, options = {}) {
   if (options.hpMult) {
     e.hp *= options.hpMult;
     e.maxHp *= options.hpMult;
+  }
+  if (e.shielded) {
+    e.facing = Math.atan2(G.player.y - e.y, G.player.x - e.x);
   }
   G.enemies.push(e);
   return e;
@@ -1342,6 +1387,12 @@ function updateEnemies(dt) {
     e.moonCd = Math.max(0, e.moonCd - dt);
     e.rotation += e.rotSpeed * dt;
     e.slow = Math.max(0, e.slow - dt * 0.75);
+    if (e.shielded) {
+      const targetFacing = Math.atan2(p.y - e.y, p.x - e.x);
+      const facingDiff =
+        ((targetFacing - e.facing + Math.PI) % TAU + TAU) % TAU - Math.PI;
+      e.facing += clamp(facingDiff, -1.8 * dt, 1.8 * dt);
+    }
     if (e.burn > 0) {
       e.burn -= dt;
       e.burnTick -= dt;
@@ -1367,7 +1418,8 @@ function updateEnemies(dt) {
       e.spawnCd -= dt;
       e.rotation += dt * 0.8;
       if (e.spawnCd <= 0) {
-        e.spawnCd = 1.55;
+        const power = G.difficulty.eventPower || 1;
+        e.spawnCd = Math.max(1.15, 1.5 - (power - 1) * 0.5);
         const type = Math.random() < 0.58 ? "comet" : "drone";
         spawnEnemy(
           type,
@@ -1688,8 +1740,12 @@ function updateLaserWeapon(dt) {
 
 function startLaserSequence(salvo) {
   const p = G.player;
+  const salvoCount = 6 + p.laserSalvoBonus;
   const angles = salvo
-    ? Array.from({ length: 3 + p.laserSalvoBonus }, () => p.laserAngle + rand(-0.006, 0.006))
+    ? Array.from(
+        { length: salvoCount },
+        () => p.laserAngle + rand(-Math.PI / 12, Math.PI / 12),
+      )
     : [p.laserAngle];
   p.laserState = "firing";
   p.laserSalvoActive = salvo;
@@ -1788,6 +1844,19 @@ function fireLaserBeam(beamAngle, salvo = false, index = 0) {
     salvo,
   });
   if (p.laserVisuals.length > 8) p.laserVisuals.shift();
+  if (G.breakthroughs.solarScar) {
+    G.laserScars.push({
+      x1: p.x,
+      y1: p.y,
+      x2: p.x + dx * range,
+      y2: p.y + dy * range,
+      width: p.laserWidth * 1.35,
+      life: 2.2,
+      maxLife: 2.2,
+      tick: 0,
+      dps: p.damage * 0.65,
+    });
+  }
   if (salvo) audio.laserBurstShot(index);
   else audio.laserFire();
   if (!salvo && hits > 0) {
@@ -1855,13 +1924,12 @@ function damageEnemy(e, amount, opts = {}) {
   if (e.dead) return;
   let finalAmount = amount;
   if (e.shielded && !opts.ignoreShield && opts.sourceX != null) {
-    const fx = G.player.x - e.x;
-    const fy = G.player.y - e.y;
+    const fx = Math.cos(e.facing);
+    const fy = Math.sin(e.facing);
     const sx = opts.sourceX - e.x;
     const sy = opts.sourceY - e.y;
-    const fl = Math.hypot(fx, fy) || 1;
     const sl = Math.hypot(sx, sy) || 1;
-    const facing = (fx * sx + fy * sy) / (fl * sl);
+    const facing = (fx * sx + fy * sy) / sl;
     if (facing > 0.5) {
       finalAmount *= 0.45;
       addText(e.x + rand(-4, 4), e.y - e.r - 5, "偏转", {
@@ -1904,12 +1972,17 @@ function killEnemy(e) {
   if (e.boss || e.elite || Math.random() < 0.16) audio.explode(size);
 
   if (e.portal) {
-    if (G.riftEnemy === e) G.riftEnemy = null;
-    if (G.activeEvent?.id === "rift") G.activeEvent = null;
+    G.riftEnemies = G.riftEnemies.filter((rift) => rift !== e && !rift.dead);
+    const remaining = G.riftEnemies.length;
+    if (G.activeEvent?.id === "rift" && remaining === 0) G.activeEvent = null;
     for (let i = 0; i < 12; i += 1) {
       dropGem(e.x + rand(-32, 32), e.y + rand(-32, 32), 3);
     }
-    showToast("虚空裂隙关闭", "good", 2000);
+    showToast(
+      remaining === 0 ? "所有虚空裂隙关闭" : `裂隙关闭 · 剩余 ${remaining}`,
+      "good",
+      2000,
+    );
   }
 
   if (e.splitter) {
@@ -2190,11 +2263,16 @@ function updateSummons(dt) {
   if (p.summons.length === 0 && p.satelliteMax <= 0) return;
 
   const satellites = p.summons.filter((summon) => summon.type === "satellite").length;
-  if (p.satelliteMax > 0 && satellites < p.satelliteMax) {
+  if (p.satelliteMax > 0) {
     p.satelliteTimer -= dt;
     if (p.satelliteTimer <= 0) {
-      p.satelliteTimer = p.satelliteInterval;
-      addSatellite();
+      if (satellites < p.satelliteMax) {
+        p.satelliteTimer = p.satelliteInterval;
+        addSatellite();
+      } else {
+        p.satelliteTimer = p.satelliteInterval * p.satelliteBombIntervalMult;
+        launchSatelliteBomb();
+      }
     }
   }
 
@@ -2208,27 +2286,33 @@ function updateSummons(dt) {
     const target = summonTarget(sx, sy, summon.type === "moon" ? 680 : 600);
     if (!target) continue;
     const angle = Math.atan2(target.y - sy, target.x - sx);
+    const arrayBreak = Boolean(G.breakthroughs.earthArray);
+    const shots = arrayBreak ? 2 : 1;
     const damage =
       p.damage *
       p.summonDamageMult *
-      (summon.type === "moon" ? 0.55 : 0.4);
-    G.bullets.push({
-      x: sx,
-      y: sy,
-      px: sx,
-      py: sy,
-      vx: Math.cos(angle) * 690,
-      vy: Math.sin(angle) * 690,
-      r: summon.type === "moon" ? 3.6 : 3,
-      damage,
-      pierce: 0,
-      hits: 0,
-      life: 1.3,
-      dead: false,
-      angle,
-      summon: true,
-    });
-    p.summonShots += 1;
+      (summon.type === "moon" ? 0.55 : 0.4) *
+      (arrayBreak ? 0.8 : 1);
+    for (let shot = 0; shot < shots; shot += 1) {
+      const shotAngle = angle + (shots > 1 ? (shot - (shots - 1) / 2) * 0.055 : 0);
+      G.bullets.push({
+        x: sx,
+        y: sy,
+        px: sx,
+        py: sy,
+        vx: Math.cos(shotAngle) * 690,
+        vy: Math.sin(shotAngle) * 690,
+        r: summon.type === "moon" ? 3.6 : 3,
+        damage,
+        pierce: arrayBreak ? 1 : 0,
+        hits: 0,
+        life: 1.3,
+        dead: false,
+        angle: shotAngle,
+        summon: true,
+      });
+      p.summonShots += 1;
+    }
     summon.fireCd =
       (summon.type === "moon" ? 1.3 : 1.65) / p.summonFireMult * rand(0.9, 1.1);
     burst(sx, sy, summon.type === "moon" ? "#e7f4ff" : "#9beeff", 2, 40, 1.6, 0.22);
@@ -2247,6 +2331,103 @@ function addSatellite() {
   showToast(`人造卫星 ${count + 1} 号入轨`, "good", 2000);
   burst(p.x, p.y, "#9beeff", 24, 160, 3, 0.65);
   audio.event();
+}
+
+function launchSatelliteBomb() {
+  const p = G.player;
+  const satellites = p.summons.filter((summon) => summon.type === "satellite");
+  const source = satellites[satellites.length - 1] || { angle: 0, orbit: 55 };
+  const sx = p.x + Math.cos(source.angle) * source.orbit;
+  const sy = p.y + Math.sin(source.angle) * source.orbit;
+  const target = summonTarget(sx, sy, 780);
+  const angle = target ? Math.atan2(target.y - sy, target.x - sx) : p.angle;
+  G.satelliteBombs.push({
+    x: sx,
+    y: sy,
+    angle,
+    vx: Math.cos(angle) * 430,
+    vy: Math.sin(angle) * 430,
+    life: 2.2,
+    maxLife: 2.2,
+    radius: 95 * p.satelliteBombRadiusMult,
+    damage: p.damage * 3.2 * p.summonDamageMult * p.satelliteBombDamageMult,
+    target,
+    trail: 0,
+    dead: false,
+  });
+  p.satelliteBombsLaunched += 1;
+  showToast("过剩卫星发射 · 即将引爆", "good", 1600);
+  audio.event();
+}
+
+function updateSatelliteBombs(dt) {
+  for (const bomb of G.satelliteBombs) {
+    if (bomb.dead) continue;
+    bomb.life -= dt;
+    bomb.trail -= dt;
+    if (bomb.target && !bomb.target.dead) {
+      const desired = Math.atan2(bomb.target.y - bomb.y, bomb.target.x - bomb.x);
+      let diff = ((desired - bomb.angle + Math.PI) % TAU + TAU) % TAU - Math.PI;
+      bomb.angle += clamp(diff, -3.2 * dt, 3.2 * dt);
+      bomb.vx = Math.cos(bomb.angle) * 430;
+      bomb.vy = Math.sin(bomb.angle) * 430;
+    }
+    bomb.x += bomb.vx * dt;
+    bomb.y += bomb.vy * dt;
+    if (bomb.trail <= 0) {
+      bomb.trail = 0.03;
+      addParticle(bomb.x, bomb.y, {
+        color: "#9beeff",
+        size: rand(1.4, 2.8),
+        life: rand(0.2, 0.4),
+        vx: rand(-25, 25),
+        vy: rand(-25, 25),
+        glow: true,
+      });
+    }
+    if (bomb.life <= 0) {
+      explodeSatelliteBomb(bomb);
+      continue;
+    }
+    for (const e of G.enemies) {
+      if (e.dead) continue;
+      if (dist2(bomb.x, bomb.y, e.x, e.y) <= (e.r + 10) ** 2) {
+        explodeSatelliteBomb(bomb);
+        break;
+      }
+    }
+  }
+  G.satelliteBombs = G.satelliteBombs.filter((bomb) => !bomb.dead);
+}
+
+function explodeSatelliteBomb(bomb) {
+  if (bomb.dead) return;
+  bomb.dead = true;
+  for (const e of G.enemies) {
+    if (e.dead) continue;
+    if (dist2(bomb.x, bomb.y, e.x, e.y) <= (bomb.radius + e.r * 0.4) ** 2) {
+      damageEnemy(e, bomb.damage, {
+        color: "#9beeff",
+        ignoreShield: true,
+        knockback: e.boss ? 0 : 55 / e.mass,
+      });
+    }
+  }
+  G.shockwaves.push({
+    x: bomb.x,
+    y: bomb.y,
+    r: 16,
+    maxR: bomb.radius * 1.1,
+    life: 0.45,
+    maxLife: 0.45,
+    damage: 0,
+    hit: new Set(),
+    color: [143, 214, 255],
+  });
+  burst(bomb.x, bomb.y, "#9beeff", 30, 220, 4, 0.65);
+  burst(bomb.x, bomb.y, "#ffffff", 12, 150, 2.4, 0.4);
+  G.shake = Math.max(G.shake, 6);
+  audio.explode(0.9);
 }
 
 function summonTarget(x, y, maxDist) {
@@ -2463,6 +2644,20 @@ function releaseGravity(exhausted) {
   audio.gravityBurst();
   if (perfect) audio.perfectRelease();
 
+  if (G.breakthroughs.tidalSingularity) {
+    G.singularities.push({
+      x: p.x,
+      y: p.y,
+      radius: 210,
+      life: 2.5,
+      maxLife: 2.5,
+      tick: 0,
+      damage: p.damage * 0.55,
+      explodeDamage: p.damage * 3.4 * p.gravityDamageMult,
+      dead: false,
+    });
+  }
+
   if (!strong) {
     addText(p.x, p.y - p.radius - 16, "微力释放", { color: "#9db4d8", size: 12, life: 0.7 });
   } else if (hits >= 6 || captured >= 3) {
@@ -2548,20 +2743,22 @@ function updateEventHorizon(dt) {
     const dy = p.y - e.y;
     const d = Math.hypot(dx, dy) || 1;
     if (d < radius && d > 4) {
-      const force = (1 - d / radius) * (heavy ? 300 : 145) * p.eventHorizonMult;
-      const direction = heavy ? -1 : 1;
-      e.x += (dx / d) * force * direction * dt;
-      e.y += (dy / d) * force * direction * dt;
-      if (heavy) e.slow = Math.max(e.slow, 0.25);
-      if (Math.random() < dt * 10) {
-        addParticle(e.x, e.y, {
-          color: heavy ? "#8fd6ff" : "#b895ff",
-          size: rand(1, 2.4),
-          life: rand(0.2, 0.4),
-          vx: (dx / d) * 80 * direction,
-          vy: (dy / d) * 80 * direction,
-          glow: true,
-        });
+      if (heavy) {
+        e.slow = Math.max(e.slow, 0.25);
+      } else {
+        const pull = (1 - d / radius) * 145 * p.eventHorizonMult;
+        e.x += (dx / d) * pull * dt;
+        e.y += (dy / d) * pull * dt;
+        if (Math.random() < dt * 10) {
+          addParticle(e.x, e.y, {
+            color: "#b895ff",
+            size: rand(1, 2.4),
+            life: rand(0.2, 0.4),
+            vx: (dx / d) * 80,
+            vy: (dy / d) * 80,
+            glow: true,
+          });
+        }
       }
     }
     if (d < 64 * p.eventHorizonMult) closeHits += 1;
@@ -2672,7 +2869,7 @@ function performWarp(tx, ty, emergency = false) {
   }
   p.horizonTimer = 0;
   warpBurst(tx, ty, damage, 132);
-  damageAlongWarpPath(fromX, fromY, tx, ty, damage * 1.05, 42);
+  damageAlongWarpPath(fromX, fromY, tx, ty, damage * 1.2, 42);
   G.warpTrails.push({
     x1: fromX,
     y1: fromY,
@@ -2682,9 +2879,10 @@ function performWarp(tx, ty, emergency = false) {
     life: 2.4,
     maxLife: 2.4,
     tick: 0,
-    dps: p.damage * 0.9 * p.warpDamageMult,
+    dps: p.damage * 1.0 * p.warpDamageMult,
+    collapseTimer: G.breakthroughs.foldedHorizon ? 1.2 : 0,
+    collapsed: false,
   });
-  if (G.warpTrails.length > 2) G.warpTrails.shift();
   G.warpGhosts.push({ x: fromX, y: fromY, life: 0.55, maxLife: 0.55 });
   G.warpGhosts.push({ x: tx, y: ty, life: 0.4, maxLife: 0.4, arrival: true });
 
@@ -2729,6 +2927,13 @@ function updateWarpEffects(dt) {
   for (const trail of G.warpTrails) {
     trail.life -= dt;
     trail.tick -= dt;
+    if (trail.collapseTimer > 0) {
+      trail.collapseTimer -= dt;
+      if (trail.collapseTimer <= 0 && !trail.collapsed) {
+        trail.collapsed = true;
+        collapseWarpTrail(trail);
+      }
+    }
     if (trail.tick <= 0) {
       trail.tick = 0.28;
       for (const e of G.enemies) {
@@ -2746,6 +2951,123 @@ function updateWarpEffects(dt) {
     }
   }
   G.warpTrails = G.warpTrails.filter((trail) => trail.life > 0);
+}
+
+function collapseWarpTrail(trail) {
+  const p = G.player;
+  damageAlongWarpPath(
+    trail.x1,
+    trail.y1,
+    trail.x2,
+    trail.y2,
+    p.damage * 2.0 * p.warpDamageMult,
+    trail.width,
+  );
+  const mx = (trail.x1 + trail.x2) / 2;
+  const my = (trail.y1 + trail.y2) / 2;
+  G.shockwaves.push({
+    x: mx,
+    y: my,
+    r: 20,
+    maxR: trail.width * 3.2,
+    life: 0.45,
+    maxLife: 0.45,
+    damage: 0,
+    hit: new Set(),
+    color: [220, 205, 255],
+  });
+  burst(mx, my, "#e7dcff", 26, 220, 3.5, 0.65);
+  G.shake = Math.max(G.shake, 8);
+  audio.explode(1);
+}
+
+function updateLaserScars(dt) {
+  for (const scar of G.laserScars) {
+    scar.life -= dt;
+    scar.tick -= dt;
+    if (scar.tick <= 0) {
+      scar.tick = 0.3;
+      for (const e of G.enemies) {
+        if (e.dead) continue;
+        if (distanceToSegment(e.x, e.y, scar.x1, scar.y1, scar.x2, scar.y2) > scar.width + e.r) {
+          continue;
+        }
+        damageEnemy(e, scar.dps * 0.3, {
+          color: "#ffb35c",
+          ignoreShield: true,
+          knockback: 0,
+        });
+        e.burn = Math.max(e.burn || 0, 1.6);
+        e.burnDps = Math.max(e.burnDps || 0, scar.dps * 0.35);
+      }
+    }
+  }
+  G.laserScars = G.laserScars.filter((scar) => scar.life > 0);
+}
+
+function updateSingularities(dt) {
+  for (const singularity of G.singularities) {
+    if (singularity.dead) continue;
+    singularity.life -= dt;
+    singularity.tick -= dt;
+    for (const e of G.enemies) {
+      if (e.dead) continue;
+      const dx = singularity.x - e.x;
+      const dy = singularity.y - e.y;
+      const d = Math.hypot(dx, dy) || 1;
+      if (d < singularity.radius) {
+        const pull = (1 - d / singularity.radius) * 170;
+        e.x += (dx / d) * pull * dt;
+        e.y += (dy / d) * pull * dt;
+        e.slow = Math.max(e.slow, 0.3);
+      }
+    }
+    if (singularity.tick <= 0) {
+      singularity.tick = 0.3;
+      for (const e of G.enemies) {
+        if (e.dead) continue;
+        if (dist2(e.x, e.y, singularity.x, singularity.y) <= singularity.radius ** 2) {
+          damageEnemy(e, singularity.damage * 0.3, {
+            color: "#b895ff",
+            ignoreShield: true,
+            knockback: 0,
+          });
+        }
+      }
+    }
+    if (singularity.life <= 0) {
+      singularity.dead = true;
+      for (const e of G.enemies) {
+        if (e.dead) continue;
+        if (
+          dist2(e.x, e.y, singularity.x, singularity.y) <=
+          (singularity.radius + 42 + e.r * 0.4) ** 2
+        ) {
+          damageEnemy(e, singularity.explodeDamage, {
+            color: "#ffd166",
+            ignoreShield: true,
+            knockback: e.boss ? 0 : 120 / e.mass,
+          });
+        }
+      }
+      G.shockwaves.push({
+        x: singularity.x,
+        y: singularity.y,
+        r: 20,
+        maxR: singularity.radius * 1.35,
+        life: 0.6,
+        maxLife: 0.6,
+        damage: 0,
+        hit: new Set(),
+        color: [255, 190, 100],
+      });
+      burst(singularity.x, singularity.y, "#ffd166", 46, 330, 5, 0.9);
+      burst(singularity.x, singularity.y, "#b895ff", 30, 220, 4, 0.8);
+      G.shake = Math.max(G.shake, 12);
+      audio.explode(1.4);
+    }
+  }
+  G.singularities = G.singularities.filter((singularity) => !singularity.dead);
 }
 
 function warpBurst(x, y, damage, radius) {
@@ -2783,9 +3105,9 @@ function updateEvents(dt) {
 
   if (G.activeEvent) {
     if (G.activeEvent.id === "rift") {
-      if (!G.riftEnemy || G.riftEnemy.dead) {
+      if (!G.riftEnemies.some((rift) => !rift.dead)) {
         G.activeEvent = null;
-        G.riftEnemy = null;
+        G.riftEnemies = [];
       }
     } else {
       G.activeEvent.time -= dt;
@@ -2793,46 +3115,109 @@ function updateEvents(dt) {
     }
   }
 
+  if (G.activeEvent?.id === "meteor") {
+    G.meteorWaveTimer -= dt;
+    if (G.meteorWave < G.meteorWaveTarget && G.meteorWaveTimer <= 0) {
+      G.meteorWave += 1;
+      spawnMeteorWave(G.meteorWave);
+      G.meteorWaveTimer = 2.1;
+    }
+  }
+
+  if (G.activeEvent?.id === "deadline") {
+    G.deadlineSpawnTimer -= dt;
+    if (G.deadlineSpawnTimer <= 0 && G.activeEvent.time > 0.5) {
+      spawnDeadlineLines();
+      const power = G.difficulty.eventPower || 1;
+      G.deadlineSpawnTimer = Math.max(0.3, 0.58 / power);
+    }
+  }
+
+  if (G.activeEvent?.id === "flare" && G.flarePulsesRemaining > 0) {
+    G.flarePulseTimer -= dt;
+    if (G.flarePulseTimer <= 0) {
+      G.flarePulsesRemaining -= 1;
+      G.flarePulseTimer = 0.85;
+      flarePulse();
+    }
+  }
+
+  updateLineHazards(dt);
   updateHazards(dt);
   if (G.boss) return;
   G.eventTimer -= dt;
-  if (G.eventTimer <= 0 && G.time > 45 && !G.activeEvent) triggerEvent();
+  const canTriggerEvent = !G.activeEvent || G.activeEvent.id === "rift";
+  if (G.eventTimer <= 0 && G.time > 38 && canTriggerEvent) triggerEvent();
 }
 
-function triggerEvent() {
+function triggerEvent(forceId = null) {
   const pool = EVENTS.filter((event) => event.id !== G.lastEventId);
-  const event = pick(pool.length ? pool : EVENTS);
+  const power = G.difficulty.eventPower || 1;
+  let event;
+  if (forceId && EVENT_BY_ID[forceId]) {
+    event = EVENT_BY_ID[forceId];
+  } else {
+    const weighted = (pool.length ? pool : EVENTS).map((entry) => ({
+      event: entry,
+      weight:
+        entry.id === "meteor" || entry.id === "deadline"
+          ? 1 + (power - 1) * 1.6
+          : 1,
+    }));
+    let roll = Math.random() * weighted.reduce((sum, item) => sum + item.weight, 0);
+    event = weighted[0].event;
+    for (const item of weighted) {
+      roll -= item.weight;
+      if (roll <= 0) {
+        event = item.event;
+        break;
+      }
+    }
+  }
   G.lastEventId = event.id;
-  G.eventTimer = rand(58, 76);
+  G.eventTimer = rand(50, 66) * (G.difficulty.eventIntervalMult || 1);
   markCodex("events", event.id);
   showToast(`特殊事件 · ${event.name}`, "good", 3400);
   audio.event();
 
   if (event.id === "meteor") {
-    G.activeEvent = { id: event.id, name: event.name, time: 7.2 };
-    for (let i = 0; i < 13; i += 1) {
-      G.hazards.push({
-        x: G.player.x + rand(-W * 0.42, W * 0.42),
-        y: G.player.y + rand(-H * 0.42, H * 0.42),
-        radius: 74,
-        delay: 0.9 + i * 0.19,
-        life: 0.5,
-        exploded: false,
-      });
-    }
+    G.meteorWaveTarget = 3 + (G.difficulty.id === "void" ? 1 : 0);
+    G.meteorWave = 1;
+    G.meteorWaveTimer = 2.1;
+    G.activeEvent = {
+      id: event.id,
+      name: event.name,
+      time: 3.6 + G.meteorWaveTarget * 2.2,
+    };
+    spawnMeteorWave(1);
   } else if (event.id === "rift") {
-    const angle = rand(0, TAU);
-    const distance = rand(320, 430);
-    const rift = spawnEnemy(
-      "rift",
-      G.player.x + Math.cos(angle) * distance,
-      G.player.y + Math.sin(angle) * distance,
-    );
-    if (rift) {
-      rift.spawnCd = 1;
-      G.riftEnemy = rift;
+    const count = G.difficulty.riftCount || 1;
+    const baseAngle = rand(0, TAU);
+    G.riftEnemies = G.riftEnemies.filter((rift) => !rift.dead);
+    let spawned = 0;
+    for (let i = 0; i < count; i += 1) {
+      const angle = baseAngle + (i * TAU) / count + rand(-0.18, 0.18);
+      const distance = rand(330, 420);
+      const rift = spawnEnemy(
+        "rift",
+        G.player.x + Math.cos(angle) * distance,
+        G.player.y + Math.sin(angle) * distance,
+      );
+      if (rift) {
+        rift.spawnCd = 1;
+        G.riftEnemies.push(rift);
+        spawned += 1;
+      }
+    }
+    if (spawned > 0) {
       G.activeEvent = { id: event.id, name: event.name, time: 999 };
-      showToast("虚空裂隙已开启 · 找到并击碎它", "", 3200);
+      showToast(
+        spawned === 1
+          ? "虚空裂隙已开启 · 找到并击碎它"
+          : `${spawned} 道虚空裂隙已开启`,
+        "",
+        3200,
+      );
     }
   } else if (event.id === "tide") {
     G.tideTimer = 12;
@@ -2840,22 +3225,157 @@ function triggerEvent() {
     G.player.gravityEnergy = Math.min(G.player.gravityMax, G.player.gravityEnergy + 25);
     showToast("星尘潮汐 · 全图星尘正在流向你", "good", 3000);
   } else if (event.id === "flare") {
-    G.activeEvent = { id: event.id, name: event.name, time: 1.2 };
-    G.enemyBullets.length = 0;
-    G.flash = 0.95;
-    G.shake = 22;
+    G.activeEvent = { id: event.id, name: event.name, time: 2.2 };
+    G.flarePulsesRemaining = 2;
+    G.flarePulseTimer = 0.85;
     G.player.gravityEnergy = Math.min(G.player.gravityMax, G.player.gravityEnergy + 28);
-    for (const e of G.enemies) {
-      if (e.dead) continue;
-      damageEnemy(e, Math.max(55, e.maxHp * 0.16), {
-        color: "#ff8a3d",
-        ignoreShield: true,
-        knockback: e.boss ? 0 : 55 / e.mass,
-      });
-    }
-    burst(G.player.x, G.player.y, "#ffd166", 80, 520, 6, 1);
-    audio.explode(2.2);
+    flarePulse();
+    showToast("太阳耀斑 · 连续三次爆发", "good", 2600);
+  } else if (event.id === "deadline") {
+    G.lineHazards = [];
+    G.deadlineSpawnTimer = 0;
+    G.activeEvent = {
+      id: event.id,
+      name: event.name,
+      time: 7.2 + power * 1.1,
+    };
+    spawnDeadlineLines();
+    showToast("赤线封锁 · 观察暗红线预警", "", 2800);
   }
+}
+
+function flarePulse() {
+  const p = G.player;
+  const power = G.difficulty.eventPower || 1;
+  G.enemyBullets.length = 0;
+  G.flash = Math.max(G.flash, 0.8);
+  G.shake = Math.max(G.shake, 16);
+  const damagePct = 0.055 + power * 0.012;
+  for (const e of G.enemies) {
+    if (e.dead) continue;
+    damageEnemy(e, Math.max(35, e.maxHp * damagePct), {
+      color: "#ff8a3d",
+      ignoreShield: true,
+      knockback: e.boss ? 0 : 55 / e.mass,
+    });
+    e.burn = Math.max(e.burn || 0, 2.6);
+    e.burnDps = Math.max(e.burnDps || 0, p.damage * 0.55);
+  }
+  G.shockwaves.push({
+    x: p.x,
+    y: p.y,
+    r: 40,
+    maxR: Math.max(W, H) * 0.72,
+    life: 0.7,
+    maxLife: 0.7,
+    damage: 0,
+    hit: new Set(),
+    color: [255, 198, 96],
+  });
+  burst(p.x, p.y, "#ffd166", 58, 460, 5.5, 0.9);
+  audio.explode(1.6);
+}
+
+function spawnMeteorWave(wave) {
+  const power = G.difficulty.eventPower || 1;
+  const count = 10 + wave * 3 + Math.round(power * 2);
+  for (let i = 0; i < count; i += 1) {
+    G.hazards.push({
+      x: G.player.x + rand(-W * 0.44, W * 0.44),
+      y: G.player.y + rand(-H * 0.44, H * 0.44),
+      radius: 72,
+      delay: 0.55 + i * 0.075,
+      life: 0.5,
+      exploded: false,
+    });
+  }
+}
+
+function spawnDeadlineLines() {
+  const power = G.difficulty.eventPower || 1;
+  const count = power >= 1.3 ? 2 : power >= 1.12 && Math.random() < 0.55 ? 2 : 1;
+  for (let i = 0; i < count; i += 1) {
+    const mode = pick(["h", "v", "d"]);
+    let x1;
+    let y1;
+    let x2;
+    let y2;
+    if (mode === "h") {
+      const y = G.player.y + rand(-H * 0.44, H * 0.44);
+      x1 = G.player.x - W * 0.72;
+      x2 = G.player.x + W * 0.72;
+      y1 = y;
+      y2 = y;
+    } else if (mode === "v") {
+      const x = G.player.x + rand(-W * 0.44, W * 0.44);
+      x1 = x;
+      x2 = x;
+      y1 = G.player.y - H * 0.72;
+      y2 = G.player.y + H * 0.72;
+    } else {
+      const angle = rand(0, TAU);
+      const length = Math.max(W, H) * 1.45;
+      const cx = G.player.x + rand(-W * 0.18, W * 0.18);
+      const cy = G.player.y + rand(-H * 0.18, H * 0.18);
+      x1 = cx - Math.cos(angle) * length * 0.5;
+      y1 = cy - Math.sin(angle) * length * 0.5;
+      x2 = cx + Math.cos(angle) * length * 0.5;
+      y2 = cy + Math.sin(angle) * length * 0.5;
+    }
+    G.lineHazards.push({
+      x1,
+      y1,
+      x2,
+      y2,
+      width: 16 + power * 5,
+      delay: 0.72,
+      active: false,
+      life: 0,
+      hit: false,
+    });
+  }
+}
+
+function updateLineHazards(dt) {
+  const p = G.player;
+  for (const line of G.lineHazards) {
+    if (!line.active) {
+      line.delay -= dt;
+      if (line.delay <= 0) {
+        line.active = true;
+        line.life = 0.5;
+        line.hit = false;
+        const mx = (line.x1 + line.x2) / 2;
+        const my = (line.y1 + line.y2) / 2;
+        burst(mx, my, "#d04455", 18, 190, 3.2, 0.5);
+        G.shake = Math.max(G.shake, 3);
+        if (Math.random() < 0.35) audio.explode(0.5);
+      }
+    } else {
+      line.life -= dt;
+    }
+    if (line.active && !line.hit && p.invuln <= 0) {
+      const distance = distanceToSegment(p.x, p.y, line.x1, line.y1, line.x2, line.y2);
+      if (distance < line.width + p.radius * 0.55) {
+        line.hit = true;
+        const dx = line.x2 - line.x1;
+        const dy = line.y2 - line.y1;
+        const lengthSq = dx * dx + dy * dy || 1;
+        const t = clamp(
+          ((p.x - line.x1) * dx + (p.y - line.y1) * dy) / lengthSq,
+          0,
+          1,
+        );
+        damagePlayer(
+          13 * (G.difficulty.eventPower || 1),
+          line.x1 + dx * t,
+          line.y1 + dy * t,
+        );
+        G.shake = Math.max(G.shake, 8);
+      }
+    }
+  }
+  G.lineHazards = G.lineHazards.filter((line) => !line.active || line.life > 0);
 }
 
 function updateHazards(dt) {
@@ -3053,7 +3573,23 @@ function chooseUpgradePool(count) {
     pool.splice(index, 1);
   }
   while (choices.length < count) choices.push(REPAIR);
+  const breakthrough = BREAKTHROUGHS.find(
+    (entry) =>
+      entry.planets.includes(G.planet.id) &&
+      !G.breakthroughs[entry.id] &&
+      Object.entries(entry.requirement).every(
+        ([upgradeId, level]) => (G.upgradeLevels[upgradeId] || 0) >= level,
+      ),
+  );
+  if (breakthrough && choices.length > 0) {
+    choices[choices.length - 1] = breakthrough;
+  }
   return choices;
+}
+
+function upgradeOwner(upgrade) {
+  if (!upgrade.planets) return "通用";
+  return `${upgrade.planets.map((id) => PLANET_BY_ID[id]?.name || id).join(" / ")}专属`;
 }
 
 let currentChoices = [];
@@ -3063,12 +3599,17 @@ function renderCards() {
   el.cards.replaceChildren();
   currentChoices.forEach((upgrade, index) => {
     const level = G.upgradeLevels[upgrade.id] || 0;
+    const owner = upgradeOwner(upgrade);
     const card = document.createElement("button");
     card.type = "button";
-    card.className = `card${upgrade.rare ? " rare" : ""}`;
+    card.className = `card${upgrade.rare || upgrade.breakthrough ? " rare" : ""}${
+      upgrade.breakthrough ? " breakthrough" : ""
+    }`;
     card.setAttribute(
       "aria-label",
-      `${upgrade.name}：${upgrade.desc}${upgrade.fallback ? "" : `，当前等级 ${level}`}`,
+      `${owner}${upgrade.breakthrough ? "突破" : ""} ${upgrade.name}：${upgrade.desc}${
+        upgrade.scope ? `，作用：${upgrade.scope}` : ""
+      }${upgrade.requirementText ? `，需要：${upgrade.requirementText}` : ""}`,
     );
 
     const top = document.createElement("div");
@@ -3085,19 +3626,29 @@ function renderCards() {
     title.textContent = upgrade.name;
     const desc = document.createElement("p");
     desc.textContent = upgrade.desc;
+    const scope = document.createElement("div");
+    scope.className = "card-scope";
+    scope.textContent = upgrade.scope ? `作用：${upgrade.scope}` : "";
+    const requirement = document.createElement("div");
+    requirement.className = "card-req";
+    requirement.textContent = upgrade.requirementText
+      ? `需要：${upgrade.requirementText}`
+      : "";
     const meta = document.createElement("div");
     meta.className = "card-meta";
     const tag = document.createElement("span");
     if (upgrade.fallback) {
       tag.textContent = "补给";
+    } else if (upgrade.breakthrough) {
+      tag.textContent = "突破 · 唯一";
     } else if (level === 0) {
-      tag.textContent = upgrade.rare ? "稀有 · 新能力" : "新强化";
+      tag.textContent = `${owner} · ${upgrade.rare ? "稀有新能力" : "新强化"}`;
     } else {
-      tag.textContent = `Lv.${level} → Lv.${level + 1}`;
+      tag.textContent = `${owner} · Lv.${level} → ${level + 1}`;
     }
     meta.append(tag);
 
-    if (!upgrade.fallback) {
+    if (!upgrade.fallback && !upgrade.breakthrough) {
       const pips = document.createElement("div");
       pips.className = "pips";
       for (let i = 0; i < upgrade.max; i += 1) {
@@ -3108,7 +3659,7 @@ function renderCards() {
       meta.append(pips);
     }
 
-    card.append(top, title, desc, meta);
+    card.append(top, title, desc, scope, requirement, meta);
     card.addEventListener("click", () => selectUpgrade(upgrade));
     el.cards.append(card);
   });
@@ -3124,6 +3675,11 @@ function selectUpgrade(upgrade) {
   audio.unlock();
   if (upgrade.fallback) {
     upgrade.apply(G.player);
+  } else if (upgrade.breakthrough) {
+    markCodex("breakthroughs", upgrade.id);
+    G.breakthroughs[upgrade.id] = true;
+    showToast(`突破 · ${upgrade.name}`, "good", 2600);
+    audio.perfectRelease();
   } else {
     markCodex("upgrades", upgrade.id);
     G.upgradeLevels[upgrade.id] = (G.upgradeLevels[upgrade.id] || 0) + 1;
@@ -3132,7 +3688,15 @@ function selectUpgrade(upgrade) {
   G.pendingLevels -= 1;
   G.flash = 0.35;
   G.shake = Math.max(G.shake, 4);
-  burst(G.player.x, G.player.y, upgrade.rare ? "#ffd166" : "#6ff7ff", 34, 180, 3.5, 0.8);
+  burst(
+    G.player.x,
+    G.player.y,
+    upgrade.rare || upgrade.breakthrough ? "#ffd166" : "#6ff7ff",
+    34,
+    180,
+    3.5,
+    0.8,
+  );
   audio.ui();
   if (G.pendingLevels > 0) {
     renderCards();
@@ -3235,12 +3799,19 @@ function updateHUD(force = false) {
     el.bossWrap.classList.add("hidden");
   }
 
-  if (!G.boss && G.activeEvent) {
+  const activeRifts = G.riftEnemies.filter((rift) => !rift.dead).length;
+  if (!G.boss && (G.activeEvent || activeRifts > 0)) {
     el.eventText.classList.remove("hidden");
-    el.eventText.textContent =
-      G.activeEvent.id === "rift"
-        ? "虚空裂隙 · 击碎它"
-        : `${G.activeEvent.name} · ${Math.max(0, Math.ceil(G.activeEvent.time))}s`;
+    let eventText = "";
+    if (G.activeEvent?.id === "rift") {
+      eventText = `虚空裂隙 · 余 ${activeRifts}`;
+    } else if (G.activeEvent) {
+      eventText = `${G.activeEvent.name} · ${Math.max(0, Math.ceil(G.activeEvent.time))}s`;
+      if (activeRifts > 0) eventText += ` · 裂隙 ${activeRifts}`;
+    } else {
+      eventText = `虚空裂隙 · 余 ${activeRifts}`;
+    }
+    el.eventText.textContent = eventText;
   } else {
     el.eventText.classList.add("hidden");
   }
@@ -3286,6 +3857,9 @@ function render() {
   drawGravityField();
   drawEventHorizon();
   drawWarpTrails();
+  drawLaserScars();
+  drawSingularities();
+  drawLineHazards();
   drawHazards();
   drawGems();
   drawEnemies();
@@ -3294,6 +3868,7 @@ function render() {
   drawPlayer();
   drawLaser();
   drawSummons();
+  drawSatelliteBombs();
   drawWarpGuard();
   drawBullets();
   drawEnemyBullets();
@@ -3986,6 +4561,23 @@ function drawSummons() {
   ctx.setLineDash([]);
   ctx.restore();
 
+  if (G.breakthroughs.earthArray && p.summons.length > 1) {
+    const points = p.summons.map((summon) => ({
+      x: w2sX(p.x + Math.cos(summon.angle) * summon.orbit),
+      y: w2sY(p.y + Math.sin(summon.angle) * summon.orbit),
+    }));
+    ctx.save();
+    ctx.strokeStyle = "rgba(155, 238, 255, 0.22)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    points.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
+
   for (const summon of p.summons) {
     const sx = w2sX(p.x + Math.cos(summon.angle) * summon.orbit);
     const sy = w2sY(p.y + Math.sin(summon.angle) * summon.orbit);
@@ -4057,6 +4649,33 @@ function drawSummons() {
         ctx.fill();
       }
     }
+    ctx.restore();
+  }
+}
+
+function drawSatelliteBombs() {
+  for (const bomb of G.satelliteBombs) {
+    const sx = w2sX(bomb.x);
+    const sy = w2sY(bomb.y);
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(bomb.angle + Math.PI / 2);
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 24);
+    glow.addColorStop(0, "rgba(155, 238, 255, 0.34)");
+    glow.addColorStop(1, "rgba(80, 170, 255, 0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = "#2b4f74";
+    ctx.fillRect(-13, -3, 8, 6);
+    ctx.fillRect(5, -3, 8, 6);
+    ctx.fillStyle = "#e0f8ff";
+    ctx.fillRect(-4, -4, 8, 8);
+    ctx.fillStyle = "#9beeff";
+    ctx.beginPath();
+    ctx.arc(0, 0, 2.2, 0, TAU);
+    ctx.fill();
     ctx.restore();
   }
 }
@@ -4372,7 +4991,7 @@ function drawShield(e) {
   ctx.stroke();
   ctx.rotate(-e.rotation * 0.3);
 
-  const facing = Math.atan2(G.player.y - e.y, G.player.x - e.x);
+  const facing = e.facing;
   ctx.strokeStyle = flash ? "#ffffff" : "rgba(160, 235, 255, 0.9)";
   ctx.lineWidth = 4;
   ctx.beginPath();
@@ -4647,6 +5266,84 @@ function drawEnemyBullets() {
   ctx.restore();
 }
 
+function drawLaserScars() {
+  if (!G.laserScars.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineCap = "round";
+  for (const scar of G.laserScars) {
+    const alpha = clamp(scar.life / scar.maxLife, 0, 1);
+    const x1 = w2sX(scar.x1);
+    const y1 = w2sY(scar.y1);
+    const x2 = w2sX(scar.x2);
+    const y2 = w2sY(scar.y2);
+    ctx.strokeStyle = `rgba(255, 125, 45, ${alpha * 0.14})`;
+    ctx.lineWidth = scar.width * 2.1;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255, 176, 80, ${alpha * 0.44})`;
+    ctx.lineWidth = scar.width;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255, 244, 205, ${alpha * 0.8})`;
+    ctx.lineWidth = Math.max(1.4, scar.width * 0.14);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    for (let i = 0; i < 4; i += 1) {
+      const t = (G.time * 0.5 + i / 4) % 1;
+      ctx.fillStyle = `rgba(255, 210, 140, ${alpha * 0.7})`;
+      ctx.beginPath();
+      ctx.arc(lerp(x1, x2, t), lerp(y1, y2, t), 2, 0, TAU);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawSingularities() {
+  for (const singularity of G.singularities) {
+    const sx = w2sX(singularity.x);
+    const sy = w2sY(singularity.y);
+    const alpha = clamp(singularity.life / singularity.maxLife, 0, 1);
+    const radius = singularity.radius * (0.8 + 0.2 * (1 - alpha));
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const aura = ctx.createRadialGradient(sx, sy, 8, sx, sy, radius);
+    aura.addColorStop(0, "rgba(20, 5, 40, 0.6)");
+    aura.addColorStop(0.45, "rgba(100, 55, 180, 0.2)");
+    aura.addColorStop(0.8, `rgba(185, 149, 255, ${0.18 * alpha})`);
+    aura.addColorStop(1, "rgba(185, 149, 255, 0)");
+    ctx.fillStyle = aura;
+    ctx.beginPath();
+    ctx.arc(sx, sy, radius, 0, TAU);
+    ctx.fill();
+    for (let i = 0; i < 4; i += 1) {
+      const spin = G.time * (0.5 + i * 0.12) * (i % 2 ? -1 : 1) + i * 1.3;
+      ctx.strokeStyle = `rgba(${i % 2 ? "255, 190, 100" : "185, 149, 255"}, ${0.2 * alpha})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(sx, sy, radius * (0.28 + i * 0.18), spin, spin + Math.PI * 1.25);
+      ctx.stroke();
+    }
+    const core = ctx.createRadialGradient(sx, sy, 0, sx, sy, 16);
+    core.addColorStop(0, "#05010c");
+    core.addColorStop(0.55, "#2a0b48");
+    core.addColorStop(0.8, "rgba(255, 209, 102, 0.65)");
+    core.addColorStop(1, "rgba(255, 150, 80, 0)");
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 16, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
 function drawWarpTrails() {
   if (!G.warpTrails.length) return;
   ctx.save();
@@ -4898,6 +5595,57 @@ function drawGravityField() {
   ctx.restore();
 }
 
+function drawLineHazards() {
+  if (!G.lineHazards.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineCap = "round";
+  for (const line of G.lineHazards) {
+    const x1 = w2sX(line.x1);
+    const y1 = w2sY(line.y1);
+    const x2 = w2sX(line.x2);
+    const y2 = w2sY(line.y2);
+    if (!line.active) {
+      const pulse = 0.6 + 0.4 * Math.sin(G.time * 10 + line.x1 * 0.01);
+      ctx.strokeStyle = `rgba(150, 28, 46, ${0.08 + pulse * 0.06})`;
+      ctx.lineWidth = line.width * 2;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(235, 75, 95, ${0.35 + pulse * 0.28})`;
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([10, 12]);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else {
+      const alpha = clamp(line.life / 0.5, 0, 1);
+      ctx.strokeStyle = `rgba(155, 22, 42, ${alpha * 0.24})`;
+      ctx.lineWidth = line.width * 2.4;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(220, 48, 72, ${alpha * 0.62})`;
+      ctx.lineWidth = line.width;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(255, 222, 218, ${alpha * 0.92})`;
+      ctx.lineWidth = Math.max(1.5, line.width * 0.16);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 function drawHazards() {
   for (const hazard of G.hazards) {
     const sx = w2sX(hazard.x);
@@ -4943,6 +5691,52 @@ function drawHazards() {
 }
 
 function drawEventAtmosphere() {
+  const deadline = G.activeEvent?.id === "deadline";
+  const flare = G.activeEvent?.id === "flare";
+  if (G.tideTimer <= 0 && !deadline && !flare) return;
+  if (flare) {
+    const intensity = clamp((G.activeEvent?.time || 0) / 2.2, 0, 1);
+    const gold = ctx.createRadialGradient(
+      W * 0.5,
+      H * 0.2,
+      0,
+      W * 0.5,
+      H * 0.2,
+      Math.max(W, H) * 0.85,
+    );
+    gold.addColorStop(0, `rgba(255, 232, 170, ${0.05 + intensity * 0.05})`);
+    gold.addColorStop(0.55, `rgba(255, 160, 80, ${0.025 * intensity})`);
+    gold.addColorStop(1, "rgba(255, 140, 70, 0)");
+    ctx.fillStyle = gold;
+    ctx.fillRect(0, 0, W, H);
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 9; i += 1) {
+      const angle = -Math.PI * 0.85 + (i / 8) * Math.PI * 0.7;
+      ctx.strokeStyle = `rgba(255, 205, 130, ${0.025 + intensity * 0.03})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(W * 0.5, H * 0.18);
+      ctx.lineTo(W * 0.5 + Math.cos(angle) * Math.max(W, H), H * 0.18 + Math.sin(angle) * Math.max(W, H));
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  if (deadline) {
+    const red = ctx.createRadialGradient(
+      W / 2,
+      H / 2,
+      Math.min(W, H) * 0.25,
+      W / 2,
+      H / 2,
+      Math.max(W, H) * 0.72,
+    );
+    red.addColorStop(0, "rgba(120, 10, 28, 0)");
+    red.addColorStop(0.65, "rgba(120, 10, 28, 0.04)");
+    red.addColorStop(1, "rgba(150, 15, 35, 0.13)");
+    ctx.fillStyle = red;
+    ctx.fillRect(0, 0, W, H);
+  }
   if (G.tideTimer <= 0) return;
   const alpha = clamp(G.tideTimer / 2, 0, 1);
   const gradient = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
@@ -5096,8 +5890,13 @@ function drawJoystick() {
 }
 
 function drawRiftPointer() {
-  const rift = G.riftEnemy;
-  if (!rift || rift.dead) return;
+  const rifts = G.riftEnemies.filter((rift) => !rift.dead);
+  if (!rifts.length) return;
+  const rift = rifts.reduce((best, candidate) => {
+    const bestD = dist2(G.player.x, G.player.y, best.x, best.y);
+    const candidateD = dist2(G.player.x, G.player.y, candidate.x, candidate.y);
+    return candidateD < bestD ? candidate : best;
+  });
   const sx = w2sX(rift.x);
   const sy = w2sY(rift.y);
   const margin = 54;
@@ -5123,7 +5922,7 @@ function drawRiftPointer() {
   ctx.fillStyle = "rgba(220, 200, 255, 0.8)";
   ctx.font = '10px "Segoe UI", "Microsoft YaHei", sans-serif';
   ctx.textAlign = "center";
-  ctx.fillText("裂隙", px, py + 24);
+  ctx.fillText(rifts.length > 1 ? `裂隙 ×${rifts.length}` : "裂隙", px, py + 24);
   ctx.restore();
 }
 
@@ -5187,6 +5986,8 @@ window.__starGame = {
       laserProgress: G.player.laserProgress,
       laserSalvoBonus: G.player.laserSalvoBonus,
       summons: G.player.summons.map((s) => s.type),
+      satelliteBombs: G.satelliteBombs.length,
+      satelliteBombsLaunched: G.player.satelliteBombsLaunched,
       summonBullets: G.bullets.filter((b) => b.summon).length,
       summonShots: G.player.summonShots,
       level: G.level,
@@ -5219,6 +6020,11 @@ window.__starGame = {
       lastKey,
       lastError,
       event: G.activeEvent?.id || null,
+      eventTime: G.activeEvent ? Math.round(G.activeEvent.time * 10) / 10 : 0,
+      meteorWave: G.meteorWave,
+      lineHazards: G.lineHazards.length,
+      riftEnemies: G.riftEnemies.filter((rift) => !rift.dead).length,
+      flarePulses: G.flarePulsesRemaining,
       tide: Math.round(G.tideTimer),
       hazards: G.hazards.length,
       endlessBossKills: G.endlessBossKills,
@@ -5227,10 +6033,47 @@ window.__starGame = {
       bossHp: G.boss ? G.boss.hp : null,
       bossMaxHp: G.boss ? G.boss.maxHp : null,
       upgrades: { ...G.upgradeLevels },
+      breakthroughs: Object.keys(G.breakthroughs),
+      laserScars: G.laserScars.length,
+      singularities: G.singularities.length,
     };
   },
   addXp(amount) {
     if (G && state === "playing") addXp(amount);
+  },
+  grantUpgrade(id) {
+    if (!G) return;
+    const upgrade = UPGRADES.find((entry) => entry.id === id);
+    if (!upgrade) return;
+    const current = G.upgradeLevels[id] || 0;
+    if (current >= upgrade.max) return;
+    G.upgradeLevels[id] = current + 1;
+    upgrade.apply(G.player);
+  },
+  prepBreakthrough() {
+    if (!G || state !== "playing") return;
+    const breakthrough = BREAKTHROUGHS.find((entry) =>
+      entry.planets.includes(G.planet.id),
+    );
+    if (!breakthrough) return;
+    for (const [id, level] of Object.entries(breakthrough.requirement)) {
+      while ((G.upgradeLevels[id] || 0) < level) {
+        const upgrade = UPGRADES.find((entry) => entry.id === id);
+        if (!upgrade) break;
+        G.upgradeLevels[id] = (G.upgradeLevels[id] || 0) + 1;
+        upgrade.apply(G.player);
+      }
+    }
+    addXp(260);
+  },
+  forceBreakthrough() {
+    if (!G) return;
+    const breakthrough = BREAKTHROUGHS.find((entry) =>
+      entry.planets.includes(G.planet.id),
+    );
+    if (!breakthrough) return;
+    G.breakthroughs[breakthrough.id] = true;
+    markCodex("breakthroughs", breakthrough.id);
   },
   setTime(time) {
     if (G) G.time = time;
@@ -5258,6 +6101,18 @@ window.__starGame = {
   },
   event() {
     if (G && state === "playing") triggerEvent();
+  },
+  deadline() {
+    if (G && state === "playing") triggerEvent("deadline");
+  },
+  meteor() {
+    if (G && state === "playing") triggerEvent("meteor");
+  },
+  flare() {
+    if (G && state === "playing") triggerEvent("flare");
+  },
+  rift() {
+    if (G && state === "playing") triggerEvent("rift");
   },
   demoMob() {
     if (!G || state !== "playing") return;
@@ -5326,7 +6181,13 @@ window.__starGame = {
     record = null;
     endlessBest = 0;
     endlessUnlocked = false;
-    codexProgress = { planets: {}, enemies: {}, upgrades: {}, events: {} };
+    codexProgress = {
+      planets: {},
+      enemies: {},
+      upgrades: {},
+      events: {},
+      breakthroughs: {},
+    };
     selectedPlanetId = "earth";
     selectedDifficultyId = "cruise";
     try {
@@ -5371,12 +6232,18 @@ if (new URLSearchParams(location.search).has("debug")) {
     "position:fixed;left:12px;bottom:12px;z-index:60;display:flex;gap:6px;flex-wrap:wrap;max-width:360px;pointer-events:auto;";
   const actions = [
     ["+180 XP", "addXp", 180],
+    ["Prep", "prepBreakthrough", undefined],
+    ["Force BT", "forceBreakthrough", undefined],
     ["Boss", "spawnBoss", undefined],
     ["Kill Boss", "killBoss", undefined],
     ["God", "god", true],
     ["Gravity", "gravity", true],
     ["Release", "gravity", false],
     ["Event", "event", undefined],
+    ["Deadline", "deadline", undefined],
+    ["Meteors", "meteor", undefined],
+    ["Flare", "flare", undefined],
+    ["Rift", "rift", undefined],
     ["Mob", "demoMob", undefined],
     ["Elite", "elite", undefined],
     ["Laser", "laserShot", undefined],
