@@ -33,7 +33,7 @@ export const PLAYER_BASE = {
   gravityPullMult: 1,
   weapon: "bullets",
   laserWidth: 18,
-  laserChargeTime: 1.22,
+  laserChargeTime: 1.55,
   laserDamageMult: 2.75,
   laserBurnLevel: 0,
   laserProgress: 0,
@@ -179,23 +179,24 @@ export const UPGRADES = [
     id: "damage",
     name: "星核裂变",
     icon: "✦",
-    desc: "造成的伤害提高 22%。",
-    scope: "普攻 / 激光 / 召唤物 / 超新星 / 引力释放",
+    desc: "造成的所有伤害提高 30%。",
+    scope: "普攻 / 激光 / 召唤物 / 超新星 / 引力与星球技能",
     max: 5,
     apply(p) {
-      p.damage *= 1.22;
+      p.damage *= 1.3;
     },
   },
   {
     id: "firerate",
     name: "脉冲超频",
     icon: "⚡",
-    desc: "出手间隔缩短 15%。",
-    scope: "自身普攻 / 太阳激光",
+    desc: "出手间隔缩短 20%。",
+    scope: "自身普攻 / 召唤物攻击 / 太阳蓄力时间",
     max: 5,
     apply(p) {
-      p.fireInterval *= 0.85;
-      p.laserChargeTime *= 0.85;
+      p.fireInterval *= 0.8;
+      p.laserChargeTime *= 0.8;
+      p.summonFireMult *= 1.2;
     },
   },
   {
@@ -271,23 +272,11 @@ export const UPGRADES = [
     },
   },
   {
-    id: "moon",
-    name: "行星环刃",
-    icon: "◐",
-    desc: "获得一圈环绕刃，接触敌人造成伤害。",
-    scope: "环刃碰撞",
-    max: 3,
-    rare: true,
-    apply(p) {
-      p.moons += 1;
-    },
-  },
-  {
     id: "nova",
     name: "超新星脉冲",
     icon: "◎",
     desc: "击退并灼烧周围敌人，伤害随攻击力提高。",
-    scope: "周期冲击波",
+    scope: "周期冲击波（基础间隔 6.5 秒，每级缩短 0.55 秒）",
     max: 3,
     rare: true,
     apply(p) {
@@ -298,19 +287,19 @@ export const UPGRADES = [
     id: "regen",
     name: "再生星云",
     icon: "✚",
-    desc: "每秒恢复 0.6 点。",
+    desc: "每秒恢复 1 点生命。",
     scope: "生命恢复",
     max: 3,
     apply(p) {
-      p.regen += 0.6;
+      p.regen += 1;
     },
   },
   {
     id: "size",
     name: "等离子核心",
     icon: "●",
-    desc: "体积提高 18%，激光宽度提高 12%。",
-    scope: "自身普攻子弹 / 太阳激光",
+    desc: "子弹体积提高 18%，太阳激光宽度提高 12%；不提高伤害。",
+    scope: "自身普攻 / 召唤物子弹尺寸 / 太阳激光宽度",
     max: 3,
     apply(p) {
       p.bulletRadius *= 1.18;
@@ -328,20 +317,6 @@ export const UPGRADES = [
     apply(p) {
       p.shieldMax += 30;
       p.shield = p.shieldMax;
-    },
-  },
-  {
-    id: "singularity",
-    name: "奇点引擎",
-    icon: "◉",
-    desc: "最大范围 +20%，蓄力速度 +20%，释放伤害 +20%。",
-    scope: "引力场 / 引力释放",
-    max: 2,
-    rare: true,
-    apply(p) {
-      p.gravityRadiusMult *= 1.2;
-      p.gravityChargeSpeed *= 1.2;
-      p.gravityDamageMult *= 1.2;
     },
   },
   {
@@ -442,7 +417,7 @@ export const UPGRADES = [
     name: "深空引力",
     icon: "◉",
     desc: "范围 +22%，吸力 +30%。",
-    scope: "木星引力场",
+    scope: "木星专属引力场",
     max: 2,
     rare: true,
     planets: ["jupiter"],
@@ -456,7 +431,7 @@ export const UPGRADES = [
     name: "潮汐循环",
     icon: "◌",
     desc: "能量上限 +25，恢复速度 +30%，释放冷却缩短 15%。",
-    scope: "木星引力场",
+    scope: "木星专属引力场",
     max: 2,
     rare: true,
     planets: ["jupiter"],
@@ -484,7 +459,7 @@ export const UPGRADES = [
     id: "warpDrive",
     name: "折叠引擎",
     icon: "⇌",
-    desc: "充能时间缩短 20%，伤害提高 30%。",
+    desc: "跃迁充能时间缩短 20%，跃迁与路径伤害提高 30%。",
     scope: "暗星跃迁",
     max: 2,
     rare: true,
@@ -498,8 +473,8 @@ export const UPGRADES = [
     id: "eventHorizon",
     name: "事件视界",
     icon: "◯",
-    desc: "范围与吸力 +30%，剪切伤害 +30%；不牵引精英/Boss。",
-    scope: "暗星事件视界",
+    desc: "事件视界与黑洞的牵引范围、吸力、爆炸伤害提高 30%；精英/Boss 仍具有抗性。",
+    scope: "暗星事件视界 / 塌缩黑洞",
     max: 2,
     rare: true,
     planets: ["voidstar"],
@@ -519,7 +494,7 @@ export const BREAKTHROUGHS = [
     scope: "月球 / 人造卫星",
     requirement: { satellite: 1, lunar: 1 },
     requirementText: "人造卫星网络 Lv1 + 月潮共振 Lv1",
-    desc: "月球和每颗人造卫星每次攻击额外发射 1 枚子弹，召唤物子弹获得 1 次穿透；卫星之间出现轨道连线。",
+    desc: "月球额外释放 1 道引力波，每颗人造卫星额外发射 1 枚子弹，召唤物攻击获得更强穿透；卫星之间出现轨道连线。",
     tip: "召唤物流的收束：更多弹丸、更好的穿透，适合在卫星满编后继续堆月潮共振。",
   },
   {
@@ -581,13 +556,13 @@ export const ENEMY_LORE = {
     name: "虚空无人机",
     threat: "中",
     desc: "保持距离并发射追踪弹的自动兵器。",
-    tip: "引力可以吸走它们的弹幕，贴近后优先击毁。",
+    tip: "木星引力与暗星黑洞都能吞掉弹幕；贴近后优先击毁。",
   },
   splitter: {
     name: "裂变星云",
     threat: "中",
     desc: "死亡后分裂成三个小型子体，清理不彻底会迅速扩散。",
-    tip: "用引力把它们聚在一起，再一次性清掉。",
+    tip: "用木星引力聚团，或让太阳蓄力激光一次贯穿整条队列。",
   },
   mini: {
     name: "星云子体",
@@ -605,13 +580,13 @@ export const ENEMY_LORE = {
     name: "自爆孢子",
     threat: "高",
     desc: "靠近后停下并开始膨胀，短暂延迟后范围爆炸。",
-    tip: "看到红色预警圈就离开；也可在引爆前用引力击退。",
+    tip: "看到红色预警圈就离开；木星可在引爆前用引力击退。",
   },
   priest: {
     name: "虚空祭司",
     threat: "高",
     desc: "躲在后方为周围敌人回复生命，并发射缓慢的能量球。",
-    tip: "它是优先目标。用引力把它从后排拖出来。",
+    tip: "它是优先目标。用木星引力拖出后排，或让暗星黑洞吞掉其身边护卫。",
   },
   elite: {
     name: "陨星领主",
@@ -623,7 +598,7 @@ export const ENEMY_LORE = {
     name: "虚空吞噬者",
     threat: "灾厄",
     desc: "从虚空深处醒来的行星猎手，会召唤彗尾并释放环形弹幕。",
-    tip: "二阶段弹幕更密；用引力吸弹后寻找安全窗口输出。",
+    tip: "二阶段弹幕更密；用木星引力或暗星黑洞清出安全窗口再反击。",
   },
   rift: {
     name: "虚空裂隙",
@@ -638,18 +613,18 @@ export const PLANETS = [
     id: "earth",
     name: "地球",
     en: "EARTH",
-    tag: "卫星召唤",
+    tag: "轨道文明",
     icon: "🌍",
     colors: ["#b9ffff", "#5cd6ff", "#2d6ef0", "#091245"],
-    desc: "人类母星。月球先行，人造卫星陆续入轨；满编后，多余的卫星会被直接发射出去引爆。",
+    desc: "人类母星。月球以引力波犁开敌群，人造卫星不断入轨；进入星轨过载后，整条轨道都会加速运转。",
     passive: "轨道文明",
     passiveDesc:
-      "开局自带月球；每 30 秒发射一颗人造卫星，最多 5 颗。满编后每 30 秒会有一颗卫星脱离轨道，冲向最近敌人并自毁，造成小范围伤害。",
+      "自带可持续释放引力波的月球；每 30 秒发射一颗卫星，最多 5 颗，过剩卫星会脱轨自毁。按下空格进入星轨过载状态，移动速度提升 30%，召唤物攻速翻倍；再次按下或耗尽充能后退出。",
+    abilityLabel: "星轨",
+    abilityAction: "切换过载",
     modifiers: {
       regen: 0.15,
-      gravityRadiusMult: 0.95,
       gravityMax: 1,
-      gravityDamageMult: 1,
       summonDamageMult: 1.05,
       satelliteMax: 5,
       satelliteInterval: 30,
@@ -659,22 +634,21 @@ export const PLANETS = [
     id: "sun",
     name: "太阳",
     en: "SUN",
-    tag: "蓄力激光",
+    tag: "日冕齐射",
     icon: "☀️",
     colors: ["#fffbe0", "#ffd166", "#ff8a3d", "#7a1d08"],
     weapon: "laser",
-    desc: "把自身点燃的恒星。基础攻击改为蓄力激光；每次开火积攒过载，攒满后下一次攻击会沿单条指示线连续速射多道激光，每发带极小偏角。",
-    passive: "日冕过载",
+    desc: "把自身点燃的恒星。日冕会自动积蓄能量，按下空格便将当前蓄力释放为贯穿激光。",
+    passive: "日冕齐射",
     passiveDesc:
-      "每 5 次激光积攒一次过载，下次攻击以瞄准线为中心、左右各 15° 随机连续射出 6 道激光。伤害 +16%，攻速 +8%，但最大生命 -15%，引力较弱。",
+      "伤害 +16%，最大生命 -15%；自动蓄力，按下空格释放激光。蓄力越久，光束越宽、伤害越高。每 5 次击发积攒一点充能，满 5 点后下一次攻击可连续释放 6 道激光。",
+    abilityLabel: "日冕",
+    abilityAction: "发射激光",
     modifiers: {
       maxHp: 0.85,
       damage: 1.16,
       fireInterval: 0.92,
       speed: 1.04,
-      gravityRadiusMult: 0.8,
-      gravityMax: 0.85,
-      gravityDamageMult: 0.9,
       magnet: 0.95,
     },
   },
@@ -685,16 +659,19 @@ export const PLANETS = [
     tag: "引力洪流",
     icon: "🪐",
     colors: ["#ffe8c2", "#e0b07a", "#9c5f3a", "#2a1220"],
-    desc: "以质量换空间的气态巨行星。引力场远大于其他星核，靠聚怪与释放冲击波碾碎敌群。",
+    desc: "以质量换空间的气态巨行星。它缓慢自愈，以高频风暴击退敌群，并用专属引力场掌控战场。",
     passive: "引力洪流",
     passiveDesc:
-      "引力范围、能量、吸力与释放伤害大幅提高；每 6.5 秒释放风暴击退敌群。最大生命 +35%，移速 -10%。",
+      "最大生命 +35%，移动速度 -10%，每秒恢复 0.7 生命；每 4.8 秒释放风暴击退敌群。按住空格积蓄引力，期间获得 28% 伤害减免，松手释放冲击。",
+    abilityLabel: "引力",
+    abilityAction: "按住聚能",
     modifiers: {
       radius: 1.18,
       maxHp: 1.35,
       speed: 0.9,
       damage: 0.88,
       fireInterval: 1.05,
+      regen: 0.7,
       gravityRadiusMult: 1.42,
       gravityMax: 1.55,
       gravityDamageMult: 1.5,
@@ -702,6 +679,9 @@ export const PLANETS = [
       gravityDrain: 29,
       gravityRecharge: 32,
       gravityReleaseCdMult: 0.78,
+      gravityMitigation: 0.28,
+      stormInterval: 4.8,
+      stormRadius: 225,
       magnet: 1.1,
     },
   },
@@ -709,21 +689,21 @@ export const PLANETS = [
     id: "voidstar",
     name: "暗星",
     en: "VOIDSTAR",
-    tag: "跃迁奇点",
+    tag: "视界坍缩",
     icon: "🌑",
     colors: ["#f0e9ff", "#9b7bff", "#241052", "#02030a"],
-    desc: "一颗失去推进能力的暗星。它不靠引擎移动，而是折叠空间：点击或轻触战场即可跃迁。",
-    passive: "事件视界",
+    desc: "一颗失去推进能力的暗星。它靠折叠空间跃迁，并在路径上留下持续侵蚀现实的暗轨。",
+    passive: "视界坍缩",
     passiveDesc:
-      "无法使用 WASD 移动。跃迁可存 3 格，每格 3 秒依次回充；点击/轻触或按 Q 消耗一格跃迁，路径造成伤害并留下轨迹。事件视界只牵引杂兵；精英/Boss不受牵引，但会在外圈被减速并持续受到剪切伤害；重质量目标贴近且应急就绪时会自动触发跃迁。",
+      "无法移动，点击屏幕可进行跃迁，并在跃迁路径留下暗轨。跃迁最多储存 3 次，每 3 秒恢复一次；充能完全时按下空格可化身黑洞，期间不会受到伤害并持续牵引敌人和弹幕，结束时会产生一次爆炸并击退存活者。黑洞期间无法主动取消。",
+    abilityLabel: "奇点",
+    abilityAction: "满充能释放",
     noMove: true,
     modifiers: {
       maxHp: 1.12,
       damage: 1.12,
       fireInterval: 0.94,
-      gravityRadiusMult: 1.05,
       gravityMax: 1.1,
-      gravityDamageMult: 1.1,
       magnet: 1.18,
       warpChargesMax: 3,
       warpRechargeTime: 3,
