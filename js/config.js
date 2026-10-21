@@ -37,7 +37,7 @@ export const PLAYER_BASE = {
   laserDamageMult: 2.75,
   laserBurnLevel: 0,
   laserProgress: 0,
-  laserProgressMax: 6,
+  laserProgressMax: 5,
   laserSalvoBonus: 0,
   summonDamageMult: 1,
   summonFireMult: 1,
@@ -151,7 +151,7 @@ export const ENEMY_TYPES = {
   },
   priest: {
     radius: 20,
-    hp: 145,
+    hp: 110,
     speed: 52,
     damage: 8,
     xp: 6,
@@ -374,7 +374,7 @@ export const UPGRADES = [
     id: "excessSatellite",
     name: "过剩卫星协议",
     icon: "☄",
-    desc: "引爆伤害 +35%，范围 +20%，发射间隔缩短 10%。",
+    desc: "引爆伤害 +35%，范围 +20%。",
     scope: "过剩卫星引爆",
     max: 2,
     rare: true,
@@ -382,7 +382,32 @@ export const UPGRADES = [
     apply(p) {
       p.satelliteBombDamageMult *= 1.35;
       p.satelliteBombRadiusMult *= 1.2;
-      p.satelliteBombIntervalMult *= 0.9;
+    },
+  },
+  {
+    id: "satelliteSpeed",
+    name: "轨道加速阵列",
+    icon: "⏱",
+    desc: "卫星入轨与过剩卫星发射间隔缩短 10%。",
+    scope: "卫星入轨 / 过剩卫星发射",
+    max: 3,
+    planets: ["earth"],
+    apply(p) {
+      p.satelliteInterval *= 0.9;
+    },
+  },
+  {
+    id: "stormEngine",
+    name: "风暴引擎",
+    icon: "🌀",
+    desc: "风暴释放间隔缩短 12%，范围扩大 10%。",
+    scope: "木星风暴",
+    max: 3,
+    rare: true,
+    planets: ["jupiter"],
+    apply(p) {
+      p.stormInterval *= 0.88;
+      p.stormRadius *= 1.1;
     },
   },
   {
@@ -619,7 +644,7 @@ export const PLANETS = [
     desc: "人类母星。月球先行，人造卫星陆续入轨；满编后，多余的卫星会被直接发射出去引爆。",
     passive: "轨道文明",
     passiveDesc:
-      "开局自带月球；每 45 秒发射一颗人造卫星，最多 5 颗。满编后每 45 秒发射一颗过剩卫星并引爆，造成小范围伤害。",
+      "开局自带月球；每 30 秒发射一颗人造卫星，最多 5 颗。满编后每 30 秒会有一颗卫星脱离轨道，冲向最近敌人并自毁，造成小范围伤害。",
     modifiers: {
       regen: 0.15,
       gravityRadiusMult: 0.95,
@@ -627,7 +652,7 @@ export const PLANETS = [
       gravityDamageMult: 1,
       summonDamageMult: 1.05,
       satelliteMax: 5,
-      satelliteInterval: 45,
+      satelliteInterval: 30,
     },
   },
   {
@@ -641,7 +666,7 @@ export const PLANETS = [
     desc: "把自身点燃的恒星。基础攻击改为蓄力激光；每次开火积攒过载，攒满后下一次攻击会沿单条指示线连续速射多道激光，每发带极小偏角。",
     passive: "日冕过载",
     passiveDesc:
-      "每 6 次激光积攒一次过载，下次攻击以瞄准线为中心、左右各 15° 随机连续射出 6 道激光。伤害 +16%，攻速 +8%，但最大生命 -15%，引力较弱。",
+      "每 5 次激光积攒一次过载，下次攻击以瞄准线为中心、左右各 15° 随机连续射出 6 道激光。伤害 +16%，攻速 +8%，但最大生命 -15%，引力较弱。",
     modifiers: {
       maxHp: 0.85,
       damage: 1.16,
