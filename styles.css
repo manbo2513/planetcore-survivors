@@ -676,6 +676,31 @@ button {
   color: rgba(143, 166, 196, 0.68);
 }
 
+.codex-owner {
+  display: inline-block;
+  margin-top: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.codex-owner:empty {
+  display: none;
+}
+
+.codex-owner.general {
+  border: 1px solid rgba(111, 247, 255, 0.38);
+  background: rgba(30, 84, 100, 0.36);
+  color: #9bfbff;
+}
+
+.codex-owner.exclusive {
+  border: 1px solid rgba(255, 209, 102, 0.42);
+  background: rgba(97, 70, 22, 0.36);
+  color: #ffd166;
+}
+
 .codex-desc {
   margin: 10px 0 7px;
   font-size: 12px;
