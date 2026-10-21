@@ -343,7 +343,7 @@ function makePlayer(planet) {
     laserDamageMult: PLAYER_BASE.laserDamageMult,
     laserBurnLevel: 0,
     laserProgress: 0,
-    laserProgressMax: 6,
+    laserProgressMax: 5,
     laserSalvoBonus: 0,
     laserFiringAngles: [],
     laserSalvoActive: false,
@@ -381,6 +381,8 @@ function makePlayer(planet) {
     gravityPerfect: false,
     planetId: planet?.id || "earth",
     coronaTimer: 0,
+    stormInterval: 6.5,
+    stormRadius: 225,
     stormTimer: planet?.id === "jupiter" ? 6.5 : 0,
     x: 0,
     y: 0,
@@ -672,15 +674,17 @@ function renderCodex() {
     }
   } else if (codexTab === "upgrades") {
     for (const upgrade of UPGRADES) {
-      const planetTag = upgrade.planets
+      const owner = upgrade.planets
         ? `${upgrade.planets.map((id) => PLANET_BY_ID[id]?.name || id).join(" / ")}专属`
         : "通用";
       addCodexCard({
         icon: upgrade.icon,
         name: upgrade.name,
-        meta: `${upgrade.rare ? "稀有" : "常规"} · ${planetTag} · 最多 ${upgrade.max} 级`,
+        meta: `${upgrade.rare ? "稀有" : "常规"} · 最多 ${upgrade.max} 级`,
         desc: upgrade.desc,
         scope: upgrade.scope,
+        owner,
+        ownerKind: upgrade.planets ? "exclusive" : "general",
         tip: "升级时在三个随机强化中选择；未满级的强化才会再次出现。",
         recorded: Boolean(codexProgress.upgrades?.[upgrade.id]),
       });
@@ -693,9 +697,11 @@ function renderCodex() {
       addCodexCard({
         icon: breakthrough.icon,
         name: breakthrough.name,
-        meta: `${planetTag}专属 · 唯一突破`,
+        meta: "唯一突破",
         desc: breakthrough.desc,
         scope: breakthrough.scope,
+        owner: `${planetTag}专属`,
+        ownerKind: "exclusive",
         tip: `需要：${breakthrough.requirementText}。${breakthrough.tip}`,
         recorded: Boolean(codexProgress.breakthroughs?.[breakthrough.id]),
       });
@@ -714,7 +720,7 @@ function renderCodex() {
   }
 }
 
-function addCodexCard({ icon, name, meta, desc, scope, tip, recorded }) {
+function addCodexCard({ icon, name, meta, desc, scope, owner, ownerKind, tip, recorded }) {
   const card = document.createElement("article");
   card.className = "codex-card";
   const head = document.createElement("div");
@@ -728,7 +734,10 @@ function addCodexCard({ icon, name, meta, desc, scope, tip, recorded }) {
   const metaText = document.createElement("div");
   metaText.className = "codex-meta";
   metaText.textContent = meta;
-  titleBox.append(title, metaText);
+  const ownerBadge = document.createElement("span");
+  ownerBadge.className = `codex-owner ${ownerKind || ""}`;
+  ownerBadge.textContent = owner || "";
+  titleBox.append(title, metaText, ownerBadge);
   head.append(iconBox, titleBox);
   const descEl = document.createElement("p");
   descEl.className = "codex-desc";
@@ -2344,9 +2353,19 @@ function addSatellite() {
 function launchSatelliteBomb() {
   const p = G.player;
   const satellites = p.summons.filter((summon) => summon.type === "satellite");
-  const source = satellites[satellites.length - 1] || { angle: 0, orbit: 55 };
+  const source = satellites[satellites.length - 1];
+  if (!source) return;
   const sx = p.x + Math.cos(source.angle) * source.orbit;
   const sy = p.y + Math.sin(source.angle) * source.orbit;
+  p.summons = p.summons.filter((summon) => summon !== source);
+  const replacementCount = p.summons.filter((summon) => summon.type === "satellite").length;
+  p.summons.push({
+    type: "satellite",
+    angle: source.angle + Math.PI + rand(-0.25, 0.25),
+    orbit: 55 + replacementCount * 13,
+    fireCd: rand(0.5, 1.2),
+  });
+  burst(sx, sy, "#9beeff", 16, 120, 2.6, 0.5);
   const target = summonTarget(sx, sy, 780);
   const angle = target ? Math.atan2(target.y - sy, target.x - sx) : p.angle;
   G.satelliteBombs.push({
@@ -2364,7 +2383,7 @@ function launchSatelliteBomb() {
     dead: false,
   });
   p.satelliteBombsLaunched += 1;
-  showToast("过剩卫星发射 · 即将引爆", "good", 1600);
+  showToast("卫星脱离轨道 · 自毁冲击", "good", 1600);
   audio.event();
 }
 
@@ -2689,8 +2708,8 @@ function updatePlanetPassive(dt) {
   if (p.planetId === "jupiter") {
     p.stormTimer -= dt;
     if (p.stormTimer <= 0) {
-      p.stormTimer = 6.5;
-      const radius = 225;
+      p.stormTimer = p.stormInterval;
+      const radius = p.stormRadius;
       for (const e of G.enemies) {
         if (e.dead) continue;
         if (dist2(e.x, e.y, p.x, p.y) <= (radius + e.r * 0.4) ** 2) {
