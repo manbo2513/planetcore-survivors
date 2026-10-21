@@ -1867,3 +1867,185 @@ button {
     font-size: 11.5px;
   }
 }
+
+/* Planet ability and grouped upgrade pools */
+
+.levelup-inner {
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.upgrade-category-bar {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -10px auto 16px;
+}
+
+.upgrade-category {
+  padding: 7px 13px;
+  border: 1px solid rgba(111, 247, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(10, 23, 49, 0.78);
+  color: #8fa9c7;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.upgrade-category:hover,
+.upgrade-category:focus-visible,
+.upgrade-category.active {
+  border-color: rgba(255, 209, 102, 0.64);
+  background: rgba(76, 60, 29, 0.68);
+  color: #ffe8aa;
+  outline: none;
+}
+
+.cards {
+  max-width: 980px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.upgrade-choice-group {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid rgba(111, 247, 255, 0.13);
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(13, 28, 58, 0.42), rgba(5, 10, 24, 0.3));
+}
+
+.upgrade-choice-group:first-child {
+  background:
+    linear-gradient(180deg, rgba(21, 53, 70, 0.42), rgba(5, 10, 24, 0.3));
+}
+
+.upgrade-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 2px 11px;
+  text-align: left;
+}
+
+.upgrade-group-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 1px solid rgba(111, 247, 255, 0.36);
+  border-radius: 50%;
+  background: rgba(34, 82, 106, 0.42);
+  color: #bffcff;
+  box-shadow: 0 0 18px rgba(111, 247, 255, 0.14);
+}
+
+.upgrade-group-head h3 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  color: #eafcff;
+}
+
+.upgrade-group-head span:last-child {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: rgba(143, 166, 196, 0.72);
+}
+
+.upgrade-group-cards {
+  display: grid;
+  gap: 12px;
+}
+
+.upgrade-group-empty {
+  display: grid;
+  place-items: center;
+  min-height: 88px;
+  padding: 18px;
+  border: 1px dashed rgba(143, 166, 196, 0.16);
+  border-radius: 14px;
+  color: rgba(143, 166, 196, 0.48);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.upgrade-choice-group .card {
+  min-height: 196px;
+}
+
+.codex-upgrade-filters {
+  grid-column: 1 / -1;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 4px 0 10px;
+  background: linear-gradient(180deg, #070e21 72%, rgba(7, 14, 33, 0));
+}
+
+.codex-filter {
+  padding: 7px 12px;
+  border: 1px solid rgba(111, 247, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(12, 25, 50, 0.78);
+  color: #91a9c6;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+.codex-filter:hover,
+.codex-filter:focus-visible,
+.codex-filter.active {
+  border-color: rgba(111, 247, 255, 0.64);
+  background: rgba(29, 68, 98, 0.76);
+  color: #e7fcff;
+  outline: none;
+}
+
+@media (max-width: 760px) {
+  .upgrade-category-bar {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 2px;
+  }
+
+  .upgrade-category {
+    flex: none;
+  }
+
+  .cards {
+    grid-template-columns: 1fr;
+    max-height: 68vh;
+  }
+
+  .upgrade-choice-group {
+    padding: 10px;
+  }
+
+  .upgrade-choice-group .card {
+    min-height: 0;
+  }
+
+  .codex-upgrade-filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .codex-filter {
+    flex: none;
+  }
+}

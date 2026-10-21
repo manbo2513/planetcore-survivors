@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#040714" />
     <meta
       name="description"
-      content="星核幸存者：你是一颗行星，在深空中自动开火、吸收星尘、进化并击败虚空吞噬者。"
+      content="星核幸存者：你是一颗行星，在深空中迎击敌潮、吸收星尘、进化并击败虚空吞噬者。"
     />
     <title>星核幸存者 · Planetcore Survivors</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
@@ -35,7 +35,7 @@
             <div class="bar xp-bar"><div id="xpFill" class="bar-fill xp-fill"></div></div>
           </div>
           <div class="xp-row gravity-row">
-            <span class="hud-label">引力</span>
+            <span id="abilityLabel" class="hud-label">星轨</span>
             <div class="bar gravity-bar"><div id="gravityFill" class="bar-fill gravity-fill"></div></div>
             <span class="hud-value gravity-key">空格</span>
           </div>
@@ -64,7 +64,7 @@
 
       <div id="eventText" class="event-text hidden"></div>
       <div id="toast" class="toast" role="status"></div>
-      <div id="tips" class="tips">WASD / 方向键移动 · 按住空格聚怪 · ESC 暂停</div>
+      <div id="tips" class="tips">WASD / 方向键移动 · 空格发动星球能力 · ESC 暂停</div>
     </div>
 
     <div id="menu" class="overlay menu-overlay">
@@ -74,14 +74,14 @@
         <div class="title-en">PLANETCORE SURVIVORS</div>
         <p class="tagline">你是一颗行星。宇宙想吃掉你。</p>
         <p class="menu-copy">
-          自动开火，吸收星尘，在一次次进化中变成不可吞噬的星核。<br />
-          按住引力场把敌群拉进轨道，松开释放斥力。活过 8 分钟，击碎吞噬者。
+          迎击敌潮，吸收星尘，在一次次进化中变成不可吞噬的星核。<br />
+          每颗星核都有独立的空格能力。活过 8 分钟，击碎吞噬者。
         </p>
 
         <div class="control-chips">
           <span><b>WASD / 方向键</b> 移动</span>
           <span><b>自动</b> 锁定最近敌人</span>
-          <span><b>空格 / 右键</b> 引力场聚怪</span>
+          <span><b>空格 / 右键</b> 星球能力</span>
           <span><b>1 / 2 / 3</b> 选择进化</span>
           <span><b>触屏</b> 左侧拖动移动</span>
           <span><b>暗星</b> 点击 / Q 跃迁</span>
@@ -141,7 +141,8 @@
       <div class="levelup-inner">
         <div class="eyebrow">CORE EVOLUTION</div>
         <h2>星核进化</h2>
-        <p class="levelup-sub">选择一项强化，继续生存</p>
+        <p id="levelupSub" class="levelup-sub">选择一项强化，继续生存</p>
+        <div id="upgradeCategoryBar" class="upgrade-category-bar"></div>
         <div id="cards" class="cards"></div>
         <button id="rerollBtn" class="reroll-btn" type="button">重掷 · 剩余 1 次</button>
         <div class="levelup-hint">按 <b>1</b> / <b>2</b> / <b>3</b> 选择 · <b>R</b> 重掷</div>
@@ -203,9 +204,9 @@
       <span>把设备横过来，星核会看得更清楚</span>
     </div>
 
-    <button id="gravityBtn" class="gravity-btn" type="button" aria-label="按住展开引力场">
-      <span>引力</span>
-      <small>HOLD</small>
+    <button id="gravityBtn" class="gravity-btn" type="button" aria-label="发动星球能力">
+      <span id="abilityBtnLabel">星轨</span>
+      <small id="abilityBtnHint">TAP</small>
     </button>
 
     <script type="module" src="js/game.js"></script>
