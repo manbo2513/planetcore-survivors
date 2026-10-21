@@ -28,6 +28,8 @@ import {
 import { AudioEngine } from "./audio.js";
 
 const TAU = Math.PI * 2;
+const LASER_RANGE = 1120;
+const SOLAR_MIN_RELEASE = 0.5;
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d", { alpha: false });
 const audio = new AudioEngine();
@@ -41,6 +43,7 @@ const el = {
   gravityFill: document.getElementById("gravityFill"),
   gravityRow: document.querySelector(".gravity-row"),
   gravityKey: document.querySelector(".gravity-key"),
+  abilityLabel: document.getElementById("abilityLabel"),
   levelText: document.getElementById("levelText"),
   timer: document.getElementById("timer"),
   waveLabel: document.getElementById("waveLabel"),
@@ -68,6 +71,8 @@ const el = {
   codexBody: document.getElementById("codexBody"),
   codexCloseBtn: document.getElementById("codexCloseBtn"),
   levelup: document.getElementById("levelup"),
+  levelupSub: document.getElementById("levelupSub"),
+  upgradeCategoryBar: document.getElementById("upgradeCategoryBar"),
   cards: document.getElementById("cards"),
   rerollBtn: document.getElementById("rerollBtn"),
   pause: document.getElementById("pause"),
@@ -94,6 +99,8 @@ const el = {
   muteBtn: document.getElementById("muteBtn"),
   fullscreenBtn: document.getElementById("fullscreenBtn"),
   gravityBtn: document.getElementById("gravityBtn"),
+  abilityBtnLabel: document.getElementById("abilityBtnLabel"),
+  abilityBtnHint: document.getElementById("abilityBtnHint"),
   pauseBtn: document.getElementById("pauseBtn"),
 };
 
@@ -111,6 +118,7 @@ let gravityHeld = false;
 let lastKey = "";
 let lastError = "";
 let rerollAvailable = true;
+let upgradeCategoryFilter = "all";
 let selectedPlanetId = readStorage("planetcore-last-planet", "earth");
 let selectedDifficultyId = readStorage("planetcore-last-difficulty", "cruise");
 let endlessUnlocked = readStorage("planetcore-endless-unlocked", "") === "1";
@@ -118,6 +126,7 @@ let endlessBest = Number(readStorage("planetcore-endless-best", "0")) || 0;
 let codexProgress = loadCodexProgress();
 let codexReturn = "menu";
 let codexTab = "planets";
+let codexUpgradeFilter = "all";
 if (selectedDifficultyId === "endless" && !endlessUnlocked) selectedDifficultyId = "cruise";
 const coarsePointer = window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
 
@@ -349,6 +358,7 @@ function makePlayer(planet) {
     laserSalvoActive: false,
     laserShotIndex: 0,
     laserShotTimer: 0,
+    laserShotPower: 0,
     laserVisuals: [],
     laserState: "idle",
     laserCharge: 0,
@@ -379,11 +389,18 @@ function makePlayer(planet) {
     gravityHoldTime: 0,
     gravityCaptured: 0,
     gravityPerfect: false,
+    earthOverdriveActive: false,
+    earthOverdriveDrain: 25,
+    voidCollapseActive: false,
+    voidCollapseDrain: (PLAYER_BASE.gravityMax * (mods.gravityMax || 1)) / 3,
+    voidCollapseTick: 0,
+    voidCollapsePull: 0,
+    gravityMitigation: mods.gravityMitigation || 0,
     planetId: planet?.id || "earth",
     coronaTimer: 0,
-    stormInterval: 6.5,
-    stormRadius: 225,
-    stormTimer: planet?.id === "jupiter" ? 6.5 : 0,
+    stormInterval: mods.stormInterval || 6.5,
+    stormRadius: mods.stormRadius || 225,
+    stormTimer: planet?.id === "jupiter" ? mods.stormInterval || 6.5 : 0,
     x: 0,
     y: 0,
     vx: 0,
@@ -494,10 +511,8 @@ function startGame(planetId = selectedPlanetId, difficultyId = selectedDifficult
   showToast(
     `${planet.name} · ${difficulty.name} · ${
       planet.id === "voidstar"
-        ? "点击 / 轻触战场跃迁"
-        : coarsePointer
-          ? "按住右下角引力按钮"
-          : "按住空格 / 右键展开引力"
+        ? "点击跃迁 · 空格满充能塌缩"
+        : `${coarsePointer ? "右下角按钮" : "空格 / 右键"}：${planet.abilityAction}`
     }`,
     "good",
     3200,
@@ -673,7 +688,33 @@ function renderCodex() {
       });
     }
   } else if (codexTab === "upgrades") {
-    for (const upgrade of UPGRADES) {
+    const filters = [
+      ["all", "全部"],
+      ["general", "通用"],
+      ...PLANETS.map((planet) => [planet.id, `${planet.name}专属`]),
+    ];
+    const filterBar = document.createElement("div");
+    filterBar.className = "codex-upgrade-filters";
+    for (const [id, label] of filters) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `codex-filter${codexUpgradeFilter === id ? " active" : ""}`;
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        codexUpgradeFilter = id;
+        renderCodex();
+        audio.ui();
+      });
+      filterBar.append(button);
+    }
+    el.codexBody.append(filterBar);
+
+    const filteredUpgrades = UPGRADES.filter((upgrade) => {
+      if (codexUpgradeFilter === "all") return true;
+      if (codexUpgradeFilter === "general") return !upgrade.planets;
+      return upgrade.planets?.includes(codexUpgradeFilter);
+    });
+    for (const upgrade of filteredUpgrades) {
       const owner = upgrade.planets
         ? `${upgrade.planets.map((id) => PLANET_BY_ID[id]?.name || id).join(" / ")}专属`
         : "通用";
@@ -787,11 +828,24 @@ function toggleMusic() {
 }
 
 function setGravityHeld(value) {
-  gravityHeld = Boolean(value);
-  if (gravityHeld && G && G.player && state === "playing") {
-    G.player.gravityMinTimer = Math.max(G.player.gravityMinTimer, 0.16);
+  const held = Boolean(value);
+  const canAct = G && G.player && state === "playing";
+  gravityHeld = held;
+
+  if (held && canAct) {
+    const p = G.player;
+    if (p.planetId === "earth") {
+      toggleEarthOverdrive();
+    } else if (p.planetId === "voidstar") {
+      startVoidCollapse();
+    } else if (p.planetId === "sun") {
+      releaseSolarCharge();
+    } else {
+      p.gravityMinTimer = Math.max(p.gravityMinTimer, 0.16);
+    }
   }
-  if (el.gravityBtn) el.gravityBtn.classList.toggle("active", gravityHeld);
+
+  refreshAbilityUI();
 }
 
 function focusGame() {
@@ -824,6 +878,106 @@ function cancelGravity() {
   if (el.gravityRow) el.gravityRow.classList.remove("active");
   if (el.gravityRow) el.gravityRow.classList.remove("full");
   if (el.gravityKey) el.gravityKey.textContent = "空格";
+}
+
+function refreshAbilityUI() {
+  const p = G?.player;
+  const planet = p ? PLANET_BY_ID[p.planetId] : null;
+  const abilityActive =
+    Boolean(
+      p &&
+        (p.gravityActive ||
+          p.earthOverdriveActive ||
+          p.voidCollapseActive ||
+          (p.planetId === "sun" && p.laserState === "firing")),
+    );
+  if (el.gravityBtn) {
+    el.gravityBtn.classList.toggle("active", abilityActive);
+    el.gravityBtn.setAttribute(
+      "aria-label",
+      planet ? `${planet.abilityAction}：${planet.abilityLabel}` : "发动星球能力",
+    );
+  }
+  if (el.abilityBtnLabel) el.abilityBtnLabel.textContent = planet?.abilityLabel || "能力";
+  if (el.abilityBtnHint) {
+    el.abilityBtnHint.textContent =
+      p?.planetId === "sun"
+        ? "FIRE"
+        : p?.planetId === "earth"
+          ? "TOGGLE"
+          : p?.planetId === "voidstar"
+            ? "FULL"
+            : "HOLD";
+  }
+  if (el.abilityLabel) el.abilityLabel.textContent = planet?.abilityLabel || "能力";
+}
+
+function toggleEarthOverdrive() {
+  const p = G?.player;
+  if (!p || p.planetId !== "earth") return;
+  if (p.earthOverdriveActive) {
+    p.earthOverdriveActive = false;
+    p.gravityRechargeDelay = 0.65;
+    addText(p.x, p.y - p.radius - 18, "星轨减速", {
+      color: "#9beeff",
+      size: 13,
+      life: 0.75,
+    });
+    audio.ui();
+    return;
+  }
+  if (p.gravityEnergy < 10) {
+    showToast("星轨充能不足", "", 1300);
+    return;
+  }
+  p.earthOverdriveActive = true;
+  p.gravityRechargeDelay = 0.65;
+  burst(p.x, p.y, "#9beeff", 26, 180, 3.2, 0.65);
+  showToast("星轨过载 · 移动与召唤攻速提升", "good", 1600);
+  audio.gravityOn();
+}
+
+function releaseSolarCharge() {
+  const p = G?.player;
+  if (!p || p.planetId !== "sun" || p.laserState !== "charging") return;
+  if (p.laserCharge < SOLAR_MIN_RELEASE) {
+    showToast("日冕蓄力不足 · 至少达到 50%", "", 1100);
+    addText(p.x, p.y - p.radius - 16, "蓄力不足", {
+      color: "#9db4d8",
+      size: 12,
+      life: 0.65,
+    });
+    return;
+  }
+  const salvo = p.laserProgress >= p.laserProgressMax;
+  startLaserSequence(salvo, p.laserCharge);
+}
+
+function startVoidCollapse() {
+  const p = G?.player;
+  if (!p || p.planetId !== "voidstar") return;
+  if (p.voidCollapseActive) {
+    showToast("黑洞一旦展开便无法主动结束", "", 1500);
+    return;
+  }
+  if (p.gravityEnergy < p.gravityMax - 0.1) {
+    showToast(
+      `奇点尚未充满 · ${Math.ceil(p.gravityEnergy)}/${Math.ceil(p.gravityMax)}`,
+      "",
+      1400,
+    );
+    return;
+  }
+  p.voidCollapseActive = true;
+  p.voidCollapseTick = 0;
+  p.voidCollapsePull = 0;
+  p.gravityRechargeDelay = 0.8;
+  p.invuln = Math.max(p.invuln, 0.2);
+  showToast("绝对塌缩 · 黑洞展开", "good", 1800);
+  burst(p.x, p.y, "#e7dcff", 48, 260, 4.4, 0.8);
+  G.flash = Math.max(G.flash, 0.35);
+  G.shake = Math.max(G.shake, 10);
+  audio.gravityBurst();
 }
 
 async function toggleFullscreen() {
@@ -915,6 +1069,7 @@ window.addEventListener("keydown", (event) => {
 
   if (code === "Space" && state === "playing") {
     event.preventDefault();
+    if (event.repeat) return;
     setGravityHeld(true);
     return;
   }
@@ -1114,7 +1269,13 @@ function updateGame(dt) {
   }
 
   const move = getMoveVector();
-  const moveSpeed = p.speed * (p.gravityActive ? 0.72 : 1);
+  const moveSpeed =
+    p.speed *
+    (p.planetId === "jupiter" && p.gravityActive
+      ? 0.78
+      : p.planetId === "earth" && p.earthOverdriveActive
+        ? 1.3
+        : 1);
   p.vx = move.x * moveSpeed;
   p.vy = move.y * moveSpeed;
   p.x += p.vx * dt;
@@ -1175,13 +1336,13 @@ function updateGame(dt) {
   if (G.time > 8 && !G.gravityTipShown) {
     G.gravityTipShown = true;
     showToast(
-      G.player.planetId === "voidstar"
-        ? coarsePointer
-          ? "轻触战场跃迁；右下角引力按钮聚怪"
-          : "点击或按 Q 跃迁；按住空格展开引力场"
-        : coarsePointer
-          ? "按住右下角引力按钮聚怪，松开释放斥力"
-          : "按住 空格 / 右键 展开引力场，松开释放斥力",
+      G.player.planetId === "earth"
+        ? "空格切换星轨过载；再次按下或耗尽充能后退出"
+        : G.player.planetId === "sun"
+          ? "日冕自动蓄力；按下空格释放激光"
+          : G.player.planetId === "voidstar"
+            ? "点击跃迁；充能全满后按空格展开黑洞"
+            : "按住空格 / 右键展开引力；松手释放斥力",
       "good",
       3800,
     );
@@ -1708,25 +1869,26 @@ function updateLaserWeapon(dt) {
   }
 
   const bossTarget =
-    G.boss && !G.boss.dead && dist2(G.boss.x, G.boss.y, p.x, p.y) < 1050 * 1050
+    G.boss &&
+    !G.boss.dead &&
+    dist2(G.boss.x, G.boss.y, p.x, p.y) < LASER_RANGE * LASER_RANGE
       ? G.boss
       : null;
-  const target = bossTarget || nearestEnemy(p.x, p.y, 820);
-  if (!target) {
-    p.laserState = "idle";
-    p.laserCharge = 0;
-    return;
-  }
-
+  const target = bossTarget || nearestEnemy(p.x, p.y, LASER_RANGE);
   if (p.laserState === "idle") {
     p.laserState = "charging";
     p.laserCharge = 0;
     p.laserHit = new Set();
     audio.laserCharge();
   }
-
   if (p.laserState === "charging") {
-    p.laserAngle = Math.atan2(target.y - p.y, target.x - p.x);
+    if (target) {
+      p.laserAngle = Math.atan2(target.y - p.y, target.x - p.x);
+    } else {
+      const aimX = G.cam.x + (mouseScreen.x - W / 2);
+      const aimY = G.cam.y + (mouseScreen.y - H / 2);
+      p.laserAngle = Math.atan2(aimY - p.y, aimX - p.x);
+    }
     p.laserTarget = target;
     p.laserCharge = Math.min(
       1,
@@ -1748,14 +1910,11 @@ function updateLaserWeapon(dt) {
         },
       );
     }
-    if (p.laserCharge >= 1) {
-      const salvo = p.laserProgress >= p.laserProgressMax;
-      startLaserSequence(salvo);
-    }
+    refreshAbilityUI();
   }
 }
 
-function startLaserSequence(salvo) {
+function startLaserSequence(salvo, chargePower = 1) {
   const p = G.player;
   const salvoCount = 6 + p.laserSalvoBonus;
   const angles = salvo
@@ -1770,6 +1929,7 @@ function startLaserSequence(salvo) {
   p.laserShotIndex = 0;
   p.laserShotTimer = 0;
   p.laserTimer = (angles.length - 1) * 0.09 + 0.3;
+  p.laserShotPower = clamp(chargePower, 0.08, 1);
   p.laserCharge = 1;
   if (salvo) {
     p.laserProgress = 0;
@@ -1803,7 +1963,10 @@ function updateLaserSalvo(dt) {
 
 function fireLaserBeam(beamAngle, salvo = false, index = 0) {
   const p = G.player;
-  const range = 920;
+  const range = LASER_RANGE;
+  const power = clamp(p.laserShotPower || 1, 0.08, 1);
+  const beamWidth = p.laserWidth * (0.58 + power * 1.72);
+  const beamStrength = 0.5 + power * 1.7;
   const dx = Math.cos(beamAngle);
   const dy = Math.sin(beamAngle);
   let hits = 0;
@@ -1814,12 +1977,13 @@ function fireLaserBeam(beamAngle, salvo = false, index = 0) {
     const along = ex * dx + ey * dy;
     if (along < 0 || along > range) continue;
     const perp = Math.abs(ex * dy - ey * dx);
-    if (perp > p.laserWidth + e.r) continue;
+    if (perp > beamWidth + e.r) continue;
     hits += 1;
     const crit = Math.random() < p.crit;
     const damage =
       p.damage *
       p.laserDamageMult *
+      beamStrength *
       (salvo ? 0.45 : 1) *
       (crit ? p.critMult : 1);
     damageEnemy(e, damage, {
@@ -1840,7 +2004,7 @@ function fireLaserBeam(beamAngle, salvo = false, index = 0) {
   G.flash = Math.max(G.flash, salvo ? 0.12 : 0.26);
   for (let i = 0; i < 10; i += 1) {
     const along = rand(40, range);
-    const side = rand(-p.laserWidth, p.laserWidth);
+    const side = rand(-beamWidth, beamWidth);
     addParticle(
       p.x + dx * along - dy * side,
       p.y + dy * along + dx * side,
@@ -1859,6 +2023,7 @@ function fireLaserBeam(beamAngle, salvo = false, index = 0) {
     life: 0.16,
     maxLife: 0.16,
     salvo,
+    width: beamWidth,
   });
   if (p.laserVisuals.length > 8) p.laserVisuals.shift();
   if (G.breakthroughs.solarScar) {
@@ -1867,11 +2032,11 @@ function fireLaserBeam(beamAngle, salvo = false, index = 0) {
       y1: p.y,
       x2: p.x + dx * range,
       y2: p.y + dy * range,
-      width: p.laserWidth * 1.35,
+      width: beamWidth * 1.35,
       life: 2.2,
       maxLife: 2.2,
       tick: 0,
-      dps: p.damage * 0.65,
+      dps: p.damage * beamStrength * 0.65,
     });
   }
   if (salvo) audio.laserBurstShot(index);
@@ -1916,6 +2081,7 @@ function updateBullets(dt) {
     for (let j = 0; j < G.enemies.length; j += 1) {
       const e = G.enemies[j];
       if (e.dead) continue;
+      if (b.hitSet?.has(e)) continue;
       const rr = b.r + e.r;
       if (dist2(b.x, b.y, e.x, e.y) > rr * rr) continue;
 
@@ -1928,6 +2094,11 @@ function updateBullets(dt) {
         sourceX: b.x,
         sourceY: b.y,
       });
+      if (b.gravityWave) {
+        b.hitSet.add(e);
+        e.slow = Math.max(e.slow, 0.32);
+        burst(e.x, e.y, "#bff6ff", 5, 90, 2.2, 0.3);
+      }
       b.hits += 1;
       if (b.hits > b.pierce) {
         b.dead = true;
@@ -2161,6 +2332,10 @@ function damagePlayer(amount, sourceX, sourceY) {
   const p = G.player;
   if (p.invuln > 0 || state !== "playing") return;
   let remaining = amount;
+  if (p.planetId === "jupiter" && p.gravityActive && p.gravityMitigation > 0) {
+    remaining *= 1 - p.gravityMitigation;
+    burst(p.x, p.y, "#ffd166", 4, 70, 2, 0.25);
+  }
   if (p.shield > 0) {
     const absorbed = Math.min(p.shield, remaining);
     p.shield -= absorbed;
@@ -2303,6 +2478,41 @@ function updateSummons(dt) {
     const target = summonTarget(sx, sy, summon.type === "moon" ? 680 : 600);
     if (!target) continue;
     const angle = Math.atan2(target.y - sy, target.x - sx);
+    const overdriveRate = p.earthOverdriveActive ? 2 : 1;
+    if (summon.type === "moon") {
+      const moonShots = G.breakthroughs.earthArray ? 2 : 1;
+      for (let shot = 0; shot < moonShots; shot += 1) {
+        const shotAngle =
+          angle + (moonShots > 1 ? (shot - (moonShots - 1) / 2) * 0.12 : 0);
+        G.bullets.push({
+          x: sx,
+          y: sy,
+          px: sx,
+          py: sy,
+          vx: Math.cos(shotAngle) * 410,
+          vy: Math.sin(shotAngle) * 410,
+          r: Math.max(10, p.bulletRadius * 3.6),
+          damage:
+            p.damage *
+            p.summonDamageMult *
+            0.72 *
+            (moonShots > 1 ? 0.82 : 1),
+          pierce: moonShots > 1 ? 6 : 5,
+          hits: 0,
+          hitSet: new Set(),
+          life: 0.95,
+          dead: false,
+          angle: shotAngle,
+          summon: true,
+          gravityWave: true,
+        });
+      }
+      summon.fireCd =
+        (1.75 / (p.summonFireMult * overdriveRate)) * rand(0.9, 1.1);
+      burst(sx, sy, "#bff6ff", 7, 85, 2.5, 0.34);
+      p.summonShots += 1;
+      continue;
+    }
     const arrayBreak = Boolean(G.breakthroughs.earthArray);
     const shots = arrayBreak ? 2 : 1;
     const damage =
@@ -2319,7 +2529,7 @@ function updateSummons(dt) {
         py: sy,
         vx: Math.cos(shotAngle) * 690,
         vy: Math.sin(shotAngle) * 690,
-        r: summon.type === "moon" ? 3.6 : 3,
+        r: Math.max(2.2, p.bulletRadius * (summon.type === "moon" ? 0.86 : 0.72)),
         damage,
         pierce: arrayBreak ? 1 : 0,
         hits: 0,
@@ -2331,7 +2541,7 @@ function updateSummons(dt) {
       p.summonShots += 1;
     }
     summon.fireCd =
-      (summon.type === "moon" ? 1.3 : 1.65) / p.summonFireMult * rand(0.9, 1.1);
+      (1.65 / (p.summonFireMult * overdriveRate)) * rand(0.9, 1.1);
     burst(sx, sy, summon.type === "moon" ? "#e7f4ff" : "#9beeff", 2, 40, 1.6, 0.22);
   }
 }
@@ -2505,6 +2715,10 @@ function gravityRadius() {
 
 function updateGravity(dt) {
   const p = G.player;
+  if (p.planetId !== "jupiter") {
+    updatePlanetAbilityState(dt);
+    return;
+  }
   p.gravityReleaseCd = Math.max(0, p.gravityReleaseCd - dt);
   if (!gravityHeld) p.gravityLock = false;
   p.gravityMinTimer = Math.max(0, p.gravityMinTimer - dt);
@@ -2584,6 +2798,201 @@ function updateGravity(dt) {
       el.gravityKey.textContent = "空格";
     }
   }
+  refreshAbilityUI();
+}
+
+function updatePlanetAbilityState(dt) {
+  const p = G.player;
+  p.gravityReleaseCd = Math.max(0, p.gravityReleaseCd - dt);
+  p.gravityRechargeDelay = Math.max(0, p.gravityRechargeDelay - dt);
+  const tideBoost = G.tideTimer > 0 ? 1.5 : 1;
+  const recharge = () => {
+    if (p.gravityRechargeDelay <= 0) {
+      p.gravityEnergy = Math.min(
+        p.gravityMax,
+        p.gravityEnergy + p.gravityRecharge * tideBoost * dt,
+      );
+    }
+  };
+
+  if (p.planetId === "earth") {
+    if (p.earthOverdriveActive) {
+      p.gravityEnergy = Math.max(0, p.gravityEnergy - p.earthOverdriveDrain * dt);
+      if (Math.random() < dt * 28) {
+        const angle = rand(0, TAU);
+        const radius = rand(58, 108);
+        addParticle(p.x + Math.cos(angle) * radius, p.y + Math.sin(angle) * radius, {
+          color: Math.random() < 0.5 ? "#9beeff" : "#ffd166",
+          size: rand(1.5, 3.2),
+          life: rand(0.25, 0.5),
+          vx: -Math.cos(angle) * rand(80, 180),
+          vy: -Math.sin(angle) * rand(80, 180),
+          glow: true,
+        });
+      }
+      if (p.gravityEnergy <= 0) {
+        p.earthOverdriveActive = false;
+        p.gravityRechargeDelay = 0.9;
+        showToast("星轨过载结束 · 轨道正在充能", "", 1500);
+      }
+    } else {
+      recharge();
+    }
+  } else if (p.planetId === "voidstar") {
+    if (p.voidCollapseActive) {
+      updateVoidCollapse(dt);
+    } else {
+      recharge();
+    }
+  } else if (p.planetId === "sun") {
+    if (p.laserState !== "charging") {
+      p.gravityEnergy = p.gravityMax;
+    }
+  }
+
+  const abilityActive =
+    p.earthOverdriveActive ||
+    p.voidCollapseActive ||
+    p.laserState === "charging" ||
+    p.laserState === "firing";
+  const abilityFull =
+    (p.planetId === "voidstar" && p.gravityEnergy >= p.gravityMax - 0.1) ||
+    (p.planetId === "earth" && p.earthOverdriveActive) ||
+    (p.planetId === "sun" &&
+      (p.laserCharge >= 0.97 || p.laserProgress >= p.laserProgressMax));
+  el.gravityRow.classList.toggle("active", abilityActive);
+  el.gravityRow.classList.toggle("full", abilityFull);
+  if (el.gravityKey) {
+    if (p.planetId === "earth") {
+      el.gravityKey.textContent = p.earthOverdriveActive
+        ? `${Math.ceil((p.gravityEnergy / p.gravityMax) * 100)}%`
+        : p.gravityEnergy >= 10
+          ? "就绪"
+          : "充能";
+    } else if (p.planetId === "sun") {
+      const chargePercent = Math.round(p.laserCharge * 100);
+      el.gravityKey.textContent = p.laserState === "charging"
+        ? `${chargePercent}%${
+            chargePercent < SOLAR_MIN_RELEASE * 100
+              ? " · 锁定"
+              : p.laserProgress >= p.laserProgressMax
+                ? " · 齐射"
+                : " · 可发射"
+          }`
+        : p.laserProgress >= p.laserProgressMax
+          ? "过载"
+          : "发射";
+    } else if (p.planetId === "voidstar") {
+      el.gravityKey.textContent = p.voidCollapseActive
+        ? `${Math.ceil((p.gravityEnergy / p.gravityMax) * 100)}%`
+        : p.gravityEnergy >= p.gravityMax - 0.1
+          ? "就绪"
+          : `${Math.floor((p.gravityEnergy / p.gravityMax) * 100)}%`;
+    }
+  }
+  refreshAbilityUI();
+}
+
+function updateVoidCollapse(dt) {
+  const p = G.player;
+  const radius = 230 * p.eventHorizonMult;
+  p.gravityEnergy = Math.max(0, p.gravityEnergy - p.voidCollapseDrain * dt);
+  p.invuln = Math.max(p.invuln, 0.16);
+  p.voidCollapseTick -= dt;
+
+  for (const b of G.enemyBullets) {
+    if (b.dead) continue;
+    const dx = p.x - b.x;
+    const dy = p.y - b.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d < radius * 1.25) {
+      const pull = 420 + (1 - Math.min(1, d / (radius * 1.25))) * 860;
+      b.x += (dx / d) * pull * dt;
+      b.y += (dy / d) * pull * dt;
+    }
+    if (d < p.radius + 18) {
+      b.dead = true;
+      burst(b.x, b.y, "#e7dcff", 3, 70, 1.8, 0.25);
+    }
+  }
+
+  for (const e of G.enemies) {
+    if (e.dead) continue;
+    const dx = p.x - e.x;
+    const dy = p.y - e.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d > radius + e.r || d < 2) continue;
+    const weight = e.boss ? 0.12 : e.elite ? 0.42 : 1;
+    const pull = (105 + (1 - d / (radius + e.r)) * 260) * weight * p.eventHorizonMult;
+    e.x += (dx / d) * pull * dt;
+    e.y += (dy / d) * pull * dt;
+    e.slow = Math.max(e.slow, e.boss ? 0.12 : e.elite ? 0.3 : 0.55);
+  }
+
+  if (p.voidCollapseTick <= 0) {
+    p.voidCollapseTick = 0.28;
+    for (const e of G.enemies) {
+      if (e.dead) continue;
+      if (dist2(e.x, e.y, p.x, p.y) > (radius * 0.68 + e.r * 0.35) ** 2) continue;
+      const heavyScale = e.boss ? 0.45 : e.elite ? 0.8 : 1;
+      damageEnemy(e, p.damage * 0.72 * p.eventHorizonMult * heavyScale, {
+        color: "#d8c5ff",
+        ignoreShield: true,
+        knockback: 0,
+      });
+    }
+  }
+
+  if (p.gravityEnergy <= 0) finishVoidCollapse();
+}
+
+function finishVoidCollapse() {
+  const p = G.player;
+  if (!p.voidCollapseActive) return;
+  p.voidCollapseActive = false;
+  p.gravityEnergy = 0;
+  p.gravityRechargeDelay = 1.1;
+  p.invuln = Math.max(p.invuln, 0.8);
+  const radius = 300 * p.eventHorizonMult;
+  let survivors = 0;
+  for (const e of G.enemies) {
+    if (e.dead) continue;
+    if (dist2(e.x, e.y, p.x, p.y) > (radius + e.r * 0.45) ** 2) continue;
+    survivors += 1;
+    damageEnemy(e, p.damage * 5.2 * p.eventHorizonMult, {
+      color: "#fff1b8",
+      ignoreShield: true,
+    });
+    if (!e.dead && !e.boss) {
+      const dx = e.x - p.x;
+      const dy = e.y - p.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const push = e.elite ? 170 : 280 / Math.max(0.5, e.mass);
+      e.x += (dx / d) * push;
+      e.y += (dy / d) * push;
+    }
+  }
+  for (const b of G.enemyBullets) {
+    if (!b.dead && dist2(b.x, b.y, p.x, p.y) < radius * radius) b.dead = true;
+  }
+  G.shockwaves.push({
+    x: p.x,
+    y: p.y,
+    r: 30,
+    maxR: radius,
+    life: 0.72,
+    maxLife: 0.72,
+    damage: 0,
+    hit: new Set(),
+    color: [255, 233, 166],
+  });
+  burst(p.x, p.y, "#fff1b8", 72, 420, 5.5, 1);
+  burst(p.x, p.y, "#9b7bff", 48, 320, 4, 0.8);
+  G.flash = Math.max(G.flash, 0.72);
+  G.shake = Math.max(G.shake, 20);
+  showToast(`视界释放 · 击退 ${survivors} 个目标`, "good", 1800);
+  audio.gravityBurst();
+  audio.perfectRelease();
 }
 
 function releaseGravity(exhausted) {
@@ -2812,7 +3221,7 @@ function updateEventHorizon(dt) {
     }
   }
 
-  if (p.emergencyWarpCd <= 0) {
+  if (!p.voidCollapseActive && p.emergencyWarpCd <= 0) {
     let threat = null;
     let best = 150 * 150;
     for (const e of G.enemies) {
@@ -2861,7 +3270,14 @@ function updateEventHorizon(dt) {
 
 function warpTo(screenX, screenY) {
   const p = G.player;
-  if (state !== "playing" || p.planetId !== "voidstar" || p.warpCharges <= 0) return;
+  if (
+    state !== "playing" ||
+    p.planetId !== "voidstar" ||
+    p.voidCollapseActive ||
+    p.warpCharges <= 0
+  ) {
+    return;
+  }
 
   let tx = G.cam.x + (screenX - W / 2);
   let ty = G.cam.y + (screenY - H / 2);
@@ -2878,7 +3294,7 @@ function warpTo(screenX, screenY) {
 
 function performWarp(tx, ty, emergency = false) {
   const p = G.player;
-  if (state !== "playing" || p.planetId !== "voidstar") return;
+  if (state !== "playing" || p.planetId !== "voidstar" || p.voidCollapseActive) return;
   const fromX = p.x;
   const fromY = p.y;
   const damage = p.damage * 1.95 * p.warpDamageMult;
@@ -3572,6 +3988,7 @@ function showLevelUp() {
   audio.levelup();
   el.levelup.classList.remove("hidden");
   rerollAvailable = true;
+  upgradeCategoryFilter = "all";
   renderCards();
 }
 
@@ -3585,20 +4002,33 @@ function chooseUpgradePool(count) {
     weight: u.rare ? 1.05 : 2.45,
   }));
   const choices = [];
-  while (choices.length < count && pool.length > 0) {
+  const drawFrom = (items) => {
+    if (items.length === 0) return false;
     let total = 0;
-    for (const item of pool) total += item.weight;
+    for (const item of items) total += item.weight;
     let roll = Math.random() * total;
-    let index = 0;
-    for (let i = 0; i < pool.length; i += 1) {
-      roll -= pool[i].weight;
+    let index = items.length - 1;
+    for (let i = 0; i < items.length; i += 1) {
+      roll -= items[i].weight;
       if (roll <= 0) {
         index = i;
         break;
       }
     }
-    choices.push(pool[index].upgrade);
-    pool.splice(index, 1);
+    const [item] = items.splice(index, 1);
+    const poolIndex = pool.indexOf(item);
+    if (poolIndex >= 0) pool.splice(poolIndex, 1);
+    choices.push(item.upgrade);
+    return true;
+  };
+  const generalPool = pool.filter((item) => !item.upgrade.planets);
+  const planetPool = pool.filter((item) =>
+    item.upgrade.planets?.includes(G.planet.id),
+  );
+  if (count >= 2 && generalPool.length > 0) drawFrom(generalPool);
+  if (count >= 2 && planetPool.length > 0) drawFrom(planetPool);
+  while (choices.length < count && pool.length > 0) {
+    drawFrom(pool);
   }
   while (choices.length < count) choices.push(REPAIR);
   const breakthrough = BREAKTHROUGHS.find(
@@ -3610,7 +4040,10 @@ function chooseUpgradePool(count) {
       ),
   );
   if (breakthrough && choices.length > 0) {
-    choices[choices.length - 1] = breakthrough;
+    const planetIndex = choices.findIndex((choice) =>
+      choice.planets?.includes(G.planet.id),
+    );
+    choices[planetIndex >= 0 ? planetIndex : choices.length - 1] = breakthrough;
   }
   return choices;
 }
@@ -3625,7 +4058,85 @@ let currentChoices = [];
 function renderCards() {
   currentChoices = chooseUpgradePool(3);
   el.cards.replaceChildren();
+  const planet = G.planet;
+  el.levelupSub.textContent = `本轮包含通用强化与${planet.name}专属强化 · 选择一项继续`;
+  const groups = new Map([
+    ["general", { title: "通用强化", hint: "所有星核均可获得", icon: "✦", items: [] }],
+    [
+      planet.id,
+      {
+        title: `${planet.name}专属强化`,
+        hint: `${planet.abilityLabel}构筑`,
+        icon: planet.icon,
+        items: [],
+      },
+    ],
+  ]);
   currentChoices.forEach((upgrade, index) => {
+    const key = upgrade.planets ? upgrade.planets[0] : "general";
+    groups.get(key)?.items.push({ upgrade, index });
+  });
+
+  const categoryCounts = {
+    all: currentChoices.length,
+    general: groups.get("general").items.length,
+    [planet.id]: groups.get(planet.id).items.length,
+  };
+  const categoryButtons = [];
+  const groupSections = [];
+  const categoryOptions = [
+    ["all", "全部可选"],
+    ["general", "通用"],
+    [planet.id, `${planet.name}专属`],
+  ];
+  el.upgradeCategoryBar.replaceChildren();
+  for (const [id, label] of categoryOptions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `upgrade-category${upgradeCategoryFilter === id ? " active" : ""}`;
+    button.dataset.category = id;
+    button.textContent = `${label} ${categoryCounts[id]}`;
+    button.setAttribute(
+      "aria-pressed",
+      String(upgradeCategoryFilter === id),
+    );
+    button.addEventListener("click", () => {
+      upgradeCategoryFilter = id;
+      applyUpgradeCategoryFilter(categoryButtons, groupSections);
+      audio.ui();
+    });
+    categoryButtons.push(button);
+    el.upgradeCategoryBar.append(button);
+  }
+
+  for (const group of groups.values()) {
+    const section = document.createElement("section");
+    section.className = "upgrade-choice-group";
+    section.dataset.category =
+      group.title === "通用强化" ? "general" : planet.id;
+    const head = document.createElement("div");
+    head.className = "upgrade-group-head";
+    const badge = document.createElement("span");
+    badge.className = "upgrade-group-icon";
+    badge.textContent = group.icon;
+    const copy = document.createElement("div");
+    const title = document.createElement("h3");
+    title.textContent = group.title;
+    const hint = document.createElement("span");
+    hint.textContent = group.hint;
+    copy.append(title, hint);
+    head.append(badge, copy);
+    const grid = document.createElement("div");
+    grid.className = "upgrade-group-cards";
+
+    if (group.items.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "upgrade-group-empty";
+      empty.textContent = "本轮未出现此类强化";
+      grid.append(empty);
+    }
+
+    for (const { upgrade, index } of group.items) {
     const level = G.upgradeLevels[upgrade.id] || 0;
     const owner = upgradeOwner(upgrade);
     const card = document.createElement("button");
@@ -3689,8 +4200,13 @@ function renderCards() {
 
     card.append(top, title, desc, scope, requirement, meta);
     card.addEventListener("click", () => selectUpgrade(upgrade));
-    el.cards.append(card);
-  });
+      grid.append(card);
+    }
+    section.append(head, grid);
+    el.cards.append(section);
+    groupSections.push(section);
+  }
+  applyUpgradeCategoryFilter(categoryButtons, groupSections);
   el.rerollBtn.disabled = !rerollAvailable;
   el.rerollBtn.textContent = rerollAvailable ? "重掷 · 剩余 1 次" : "本组已重掷";
 }
@@ -3698,8 +4214,24 @@ function renderCards() {
 function rerollCards() {
   if (state !== "levelup" || !rerollAvailable) return;
   rerollAvailable = false;
+  upgradeCategoryFilter = "all";
   audio.ui();
   renderCards();
+}
+
+function applyUpgradeCategoryFilter(buttons, sections) {
+  for (const button of buttons) {
+    const active = button.dataset.category === upgradeCategoryFilter;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  for (const section of sections) {
+    section.classList.toggle(
+      "hidden",
+      upgradeCategoryFilter !== "all" &&
+        section.dataset.category !== upgradeCategoryFilter,
+    );
+  }
 }
 
 function chooseUpgradeByIndex(index) {
@@ -3737,6 +4269,7 @@ function selectUpgrade(upgrade) {
   audio.ui();
   if (G.pendingLevels > 0) {
     rerollAvailable = true;
+    upgradeCategoryFilter = "all";
     renderCards();
   } else {
     el.levelup.classList.add("hidden");
@@ -3823,10 +4356,13 @@ function updateHUD(force = false) {
   el.shieldFill.style.width = p.shieldMax > 0 ? `${clamp((p.shield / p.shieldMax) * 100, 0, 100)}%` : "0%";
   el.hpText.textContent = `${Math.max(0, Math.ceil(p.hp))}`;
   el.xpFill.style.width = `${clamp((G.xp / G.xpNext) * 100, 0, 100)}%`;
-  el.gravityFill.style.width = `${clamp((p.gravityEnergy / p.gravityMax) * 100, 0, 100)}%`;
+  const abilityFill =
+    p.planetId === "sun" ? p.laserCharge : p.gravityEnergy / p.gravityMax;
+  el.gravityFill.style.width = `${clamp(abilityFill * 100, 0, 100)}%`;
   el.levelText.textContent = `Lv.${G.level}`;
   el.timer.textContent = formatTime(G.time);
   el.killText.textContent = `击杀 ${G.kills}`;
+  refreshAbilityUI();
 
   if (G.boss && !G.boss.dead) {
     el.bossWrap.classList.remove("hidden");
@@ -3893,6 +4429,7 @@ function render() {
   ctx.translate(shakeX, shakeY);
 
   drawGravityField();
+  drawPlanetAbilityEffects();
   drawEventHorizon();
   drawWarpTrails();
   drawLaserScars();
@@ -4536,9 +5073,31 @@ function drawPlayer() {
   const sx = w2sX(p.x);
   const sy = w2sY(p.y);
   const blink = p.invuln > 0 && Math.floor(p.invuln * 18) % 2 === 0;
-  ctx.globalAlpha = blink ? 0.62 : 1;
-  drawPlanet(sx, sy, p.radius, G.time, true);
-  ctx.globalAlpha = 1;
+  if (p.planetId === "voidstar" && p.voidCollapseActive) {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    const coreRadius = p.radius * 1.55;
+    const hole = ctx.createRadialGradient(sx, sy, 2, sx, sy, coreRadius);
+    hole.addColorStop(0, "rgba(0, 0, 0, 1)");
+    hole.addColorStop(0.58, "rgba(5, 1, 12, 1)");
+    hole.addColorStop(0.78, "rgba(118, 72, 210, 0.82)");
+    hole.addColorStop(0.9, "rgba(255, 231, 168, 0.55)");
+    hole.addColorStop(1, "rgba(155, 123, 255, 0)");
+    ctx.fillStyle = hole;
+    ctx.beginPath();
+    ctx.arc(sx, sy, coreRadius, 0, TAU);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 239, 190, 0.72)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, coreRadius * 1.34, coreRadius * 0.28, G.time * 0.9, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+  } else {
+    ctx.globalAlpha = blink ? 0.62 : 1;
+    drawPlanet(sx, sy, p.radius, G.time, true);
+    ctx.globalAlpha = 1;
+  }
 
   const bob = Math.sin(G.time * 4) * 2;
   const markerY = sy - p.radius * 1.95 + bob;
@@ -4724,7 +5283,7 @@ function drawLaser() {
   if (p.laserState !== "charging" && p.laserState !== "firing") return;
   const sx = w2sX(p.x);
   const sy = w2sY(p.y);
-  const range = 920;
+  const range = LASER_RANGE;
   const charge = p.laserCharge;
   const firing = p.laserState === "firing";
   const salvoReady = p.laserProgress >= p.laserProgressMax;
@@ -4735,23 +5294,24 @@ function drawLaser() {
   if (firing) {
     for (const visual of p.laserVisuals) {
       const alpha = clamp(visual.life / visual.maxLife, 0, 1);
+      const visualWidth = visual.width || p.laserWidth;
       const dx = Math.cos(visual.angle);
       const dy = Math.sin(visual.angle);
       ctx.globalAlpha = 0.25 + 0.75 * alpha;
       ctx.strokeStyle = "rgba(255, 138, 61, 0.3)";
-      ctx.lineWidth = p.laserWidth * (2.2 + 0.9 * alpha);
+      ctx.lineWidth = visualWidth * (2.2 + 0.9 * alpha);
       ctx.beginPath();
       ctx.moveTo(sx + dx * p.radius, sy + dy * p.radius);
       ctx.lineTo(sx + dx * range, sy + dy * range);
       ctx.stroke();
       ctx.strokeStyle = "rgba(255, 220, 150, 0.72)";
-      ctx.lineWidth = p.laserWidth * (0.9 + 0.45 * alpha);
+      ctx.lineWidth = visualWidth * (0.9 + 0.45 * alpha);
       ctx.beginPath();
       ctx.moveTo(sx + dx * p.radius, sy + dy * p.radius);
       ctx.lineTo(sx + dx * range, sy + dy * range);
       ctx.stroke();
       ctx.strokeStyle = "#fffdf2";
-      ctx.lineWidth = Math.max(1.5, p.laserWidth * (0.22 + 0.2 * alpha));
+      ctx.lineWidth = Math.max(1.5, visualWidth * (0.22 + 0.2 * alpha));
       ctx.beginPath();
       ctx.moveTo(sx + dx * p.radius, sy + dy * p.radius);
       ctx.lineTo(sx + dx * range, sy + dy * range);
@@ -4761,10 +5321,11 @@ function drawLaser() {
   } else {
     const dx = Math.cos(p.laserAngle);
     const dy = Math.sin(p.laserAngle);
+    const chargeWidth = p.laserWidth * (0.58 + charge * 1.72);
     ctx.strokeStyle = salvoReady
       ? "rgba(255, 220, 120, 0.62)"
       : `rgba(255, 190, 100, ${0.1 + charge * 0.26})`;
-    ctx.lineWidth = salvoReady ? 3 : 2 + charge * 5;
+    ctx.lineWidth = salvoReady ? 3 : 2 + chargeWidth * 0.34;
     ctx.beginPath();
     ctx.moveTo(sx + dx * p.radius, sy + dy * p.radius);
     ctx.lineTo(sx + dx * range, sy + dy * range);
@@ -5261,6 +5822,29 @@ function drawBullets() {
   for (const b of G.bullets) {
     const sx = w2sX(b.x);
     const sy = w2sY(b.y);
+    if (b.gravityWave) {
+      const angle = Math.atan2(b.vy, b.vx);
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(angle);
+      ctx.strokeStyle = "rgba(155, 238, 255, 0.38)";
+      ctx.lineWidth = 12;
+      ctx.beginPath();
+      ctx.arc(-8, 0, 17, -1.02, 1.02);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(225, 252, 255, 0.9)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(-8, 0, 17, -0.92, 0.92);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(167, 123, 255, 0.36)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(-18, 0, 25, -0.78, 0.78);
+      ctx.stroke();
+      ctx.restore();
+      continue;
+    }
     const tail = 22;
     ctx.strokeStyle = "rgba(111, 247, 255, 0.32)";
     ctx.lineWidth = b.r * 1.4;
@@ -5654,6 +6238,61 @@ function drawGravityField() {
   ctx.restore();
 }
 
+function drawPlanetAbilityEffects() {
+  const p = G.player;
+  const sx = w2sX(p.x);
+  const sy = w2sY(p.y);
+  if (p.planetId === "earth" && p.earthOverdriveActive) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    const pulse = 0.75 + Math.sin(G.time * 5.5) * 0.12;
+    for (let i = 0; i < 3; i += 1) {
+      const radius = (84 + i * 27) * pulse;
+      ctx.strokeStyle =
+        i === 1 ? "rgba(255, 209, 102, 0.38)" : "rgba(111, 247, 255, 0.3)";
+      ctx.lineWidth = i === 1 ? 2 : 1.2;
+      ctx.setLineDash(i === 1 ? [16, 7, 4, 7] : []);
+      ctx.beginPath();
+      ctx.arc(
+        sx,
+        sy,
+        radius,
+        G.time * (i % 2 ? -1.6 : 1.3) + i,
+        G.time * (i % 2 ? -1.6 : 1.3) + i + Math.PI * 1.5,
+      );
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  if (p.planetId === "voidstar" && p.voidCollapseActive) {
+    const radius = 230 * p.eventHorizonMult;
+    const energy = clamp(p.gravityEnergy / p.gravityMax, 0, 1);
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    const field = ctx.createRadialGradient(sx, sy, 8, sx, sy, radius);
+    field.addColorStop(0, "rgba(0, 0, 0, 0.96)");
+    field.addColorStop(0.16, "rgba(16, 4, 31, 0.92)");
+    field.addColorStop(0.42, "rgba(92, 48, 145, 0.24)");
+    field.addColorStop(0.76, `rgba(155, 123, 255, ${0.18 + (1 - energy) * 0.18})`);
+    field.addColorStop(1, "rgba(155, 123, 255, 0)");
+    ctx.fillStyle = field;
+    ctx.beginPath();
+    ctx.arc(sx, sy, radius, 0, TAU);
+    ctx.fill();
+    for (let i = 0; i < 7; i += 1) {
+      const spin = G.time * (1.15 + i * 0.16) * (i % 2 ? -1 : 1) + i;
+      ctx.strokeStyle = `rgba(${i % 3 === 0 ? "255, 231, 168" : "190, 165, 255"}, ${0.18 + i * 0.018})`;
+      ctx.lineWidth = 1.3 + (i % 2);
+      ctx.beginPath();
+      ctx.arc(sx, sy, radius * (0.2 + i * 0.09), spin, spin + Math.PI * 1.36);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
 function drawLineHazards() {
   if (!G.lineHazards.length) return;
   ctx.save();
@@ -6042,6 +6681,7 @@ window.__starGame = {
       weapon: G.player.weapon,
       laserState: G.player.laserState,
       laserCharge: Math.round(G.player.laserCharge * 100),
+      laserShotPower: Math.round((G.player.laserShotPower || 0) * 100),
       laserProgress: G.player.laserProgress,
       laserSalvoBonus: G.player.laserSalvoBonus,
       summons: G.player.summons.map((s) => s.type),
@@ -6064,10 +6704,13 @@ window.__starGame = {
       gravityMax: Math.round(G.player.gravityMax),
       gravityPull: Math.round(G.player.gravityPullMult * 100) / 100,
       gravityActive: G.player.gravityActive,
+      earthOverdriveActive: G.player.earthOverdriveActive,
+      voidCollapseActive: G.player.voidCollapseActive,
       gravityCharge: Math.round(G.player.gravityCharge * 100),
       gravityCd: Math.round(G.player.gravityReleaseCd * 100) / 100,
       capturedBullets: G.enemyBullets.filter((b) => b.captured).length,
       gravityHeld,
+      stormTimer: Math.round(G.player.stormTimer * 10) / 10,
       warpCharges: G.player.warpCharges,
       warpChargesMax: G.player.warpChargesMax,
       warpRecharge: Math.round(G.player.warpRecharge * 10) / 10,
@@ -6196,7 +6839,7 @@ window.__starGame = {
   },
   laserShot() {
     if (!G || state !== "playing" || G.player.weapon !== "laser") return;
-    const target = nearestEnemy(G.player.x, G.player.y, 920);
+    const target = nearestEnemy(G.player.x, G.player.y, LASER_RANGE);
     if (target) {
       G.player.laserAngle = Math.atan2(target.y - G.player.y, target.x - G.player.x);
     }
@@ -6204,7 +6847,7 @@ window.__starGame = {
   },
   laserSalvo() {
     if (!G || state !== "playing" || G.player.weapon !== "laser") return;
-    const target = nearestEnemy(G.player.x, G.player.y, 920);
+    const target = nearestEnemy(G.player.x, G.player.y, LASER_RANGE);
     if (target) {
       G.player.laserAngle = Math.atan2(target.y - G.player.y, target.x - G.player.x);
     }
