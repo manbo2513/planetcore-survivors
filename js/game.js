@@ -30,6 +30,7 @@ import { AudioEngine } from "./audio.js";
 const TAU = Math.PI * 2;
 const LASER_RANGE = 1120;
 const SOLAR_MIN_RELEASE = 0.5;
+const RESULT_INPUT_LOCK_MS = 1600;
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d", { alpha: false });
 const audio = new AudioEngine();
@@ -64,6 +65,10 @@ const el = {
   planetChoices: document.getElementById("planetChoices"),
   difficultyChoices: document.getElementById("difficultyChoices"),
   difficultyDesc: document.getElementById("difficultyDesc"),
+  sunAutoOption: document.getElementById("sunAutoOption"),
+  sunAutoBtn: document.getElementById("sunAutoBtn"),
+  sunAutoState: document.getElementById("sunAutoState"),
+  sunAutoDescription: document.getElementById("sunAutoDescription"),
   launchBtn: document.getElementById("launchBtn"),
   loadoutBackBtn: document.getElementById("loadoutBackBtn"),
   codex: document.getElementById("codex"),
@@ -121,6 +126,9 @@ let rerollAvailable = true;
 let upgradeCategoryFilter = "all";
 let selectedPlanetId = readStorage("planetcore-last-planet", "earth");
 let selectedDifficultyId = readStorage("planetcore-last-difficulty", "cruise");
+let sunAutoAttack = readStorage("planetcore-sun-auto-attack", "0") === "1";
+let resultLockedUntil = 0;
+let resultLockTimeout = 0;
 let endlessUnlocked = readStorage("planetcore-endless-unlocked", "") === "1";
 let endlessBest = Number(readStorage("planetcore-endless-best", "0")) || 0;
 let codexProgress = loadCodexProgress();
@@ -479,6 +487,7 @@ function freshGame(planet, difficulty) {
 }
 
 function startGame(planetId = selectedPlanetId, difficultyId = selectedDifficultyId) {
+  clearResultLock();
   let planet = PLANET_BY_ID[planetId] || PLANETS[0];
   let difficulty = DIFFICULTY_BY_ID[difficultyId] || DIFFICULTIES[0];
   if (difficulty.endless && !endlessUnlocked) difficulty = DIFFICULTIES[0];
@@ -489,6 +498,7 @@ function startGame(planetId = selectedPlanetId, difficultyId = selectedDifficult
   audio.unlock();
   cancelGravity();
   G = freshGame(planet, difficulty);
+  G.sunAutoAttack = planet.id === "sun" && sunAutoAttack;
   markCodex("planets", planet.id);
   state = "playing";
   keys.clear();
@@ -512,7 +522,11 @@ function startGame(planetId = selectedPlanetId, difficultyId = selectedDifficult
     `${planet.name} · ${difficulty.name} · ${
       planet.id === "voidstar"
         ? "点击跃迁 · 空格满充能塌缩"
-        : `${coarsePointer ? "右下角按钮" : "空格 / 右键"}：${planet.abilityAction}`
+        : `${coarsePointer ? "右下角按钮" : "空格 / 右键"}：${planet.abilityAction}${
+            planet.id === "sun"
+              ? ` · 自动攻击${G.sunAutoAttack ? "开" : "关"}`
+              : ""
+          }`
     }`,
     "good",
     3200,
@@ -523,6 +537,7 @@ function startGame(planetId = selectedPlanetId, difficultyId = selectedDifficult
 }
 
 function goMenu() {
+  clearResultLock();
   state = "menu";
   cancelGravity();
   G = null;
@@ -613,6 +628,19 @@ function renderLoadout() {
   const difficulty = DIFFICULTY_BY_ID[selectedDifficultyId] || DIFFICULTIES[0];
   el.difficultyDesc.textContent = difficulty.desc;
   el.launchBtn.textContent = `驾驶${planet.name}进入深空`;
+  renderSunAutoOption();
+}
+
+function renderSunAutoOption() {
+  const isSun = selectedPlanetId === "sun";
+  el.sunAutoOption.classList.toggle("hidden", !isSun);
+  el.sunAutoBtn.classList.toggle("active", isSun && sunAutoAttack);
+  el.sunAutoBtn.setAttribute("aria-checked", String(isSun && sunAutoAttack));
+  el.sunAutoBtn.setAttribute("aria-label", `太阳自动攻击：${sunAutoAttack ? "开启" : "关闭"}`);
+  el.sunAutoState.textContent = sunAutoAttack ? "开启" : "关闭";
+  el.sunAutoDescription.textContent = sunAutoAttack
+    ? "日冕蓄满后会立即自动发射激光"
+    : "关闭时自动蓄力，需要按空格发射";
 }
 
 function openCodex(returnTo = "menu") {
@@ -1017,13 +1045,27 @@ el.loadoutBackBtn.addEventListener("click", () => {
   el.loadout.classList.add("hidden");
   el.menu.classList.remove("hidden");
 });
+el.sunAutoBtn.addEventListener("click", () => {
+  sunAutoAttack = !sunAutoAttack;
+  writeStorage("planetcore-sun-auto-attack", sunAutoAttack ? "1" : "0");
+  renderSunAutoOption();
+  audio.ui();
+});
 el.resumeBtn.addEventListener("click", togglePause);
 el.pauseRestartBtn.addEventListener("click", () => startGame(selectedPlanetId, selectedDifficultyId));
 el.pauseMenuBtn.addEventListener("click", goMenu);
-el.retryBtn.addEventListener("click", () => startGame(selectedPlanetId, selectedDifficultyId));
-el.goMenuBtn.addEventListener("click", goMenu);
-el.againBtn.addEventListener("click", () => startGame(selectedPlanetId, selectedDifficultyId));
-el.winMenuBtn.addEventListener("click", goMenu);
+el.retryBtn.addEventListener("click", () => {
+  if (resultActionsReady()) startGame(selectedPlanetId, selectedDifficultyId);
+});
+el.goMenuBtn.addEventListener("click", () => {
+  if (resultActionsReady()) goMenu();
+});
+el.againBtn.addEventListener("click", () => {
+  if (resultActionsReady()) startGame(selectedPlanetId, selectedDifficultyId);
+});
+el.winMenuBtn.addEventListener("click", () => {
+  if (resultActionsReady()) goMenu();
+});
 el.pauseBtn.addEventListener("click", togglePause);
 el.fullscreenBtn.addEventListener("click", toggleFullscreen);
 el.muteBtn.addEventListener("click", toggleMute);
@@ -1061,6 +1103,7 @@ window.addEventListener("keydown", (event) => {
       return;
     }
     if (state === "gameover" || state === "victory") {
+      if (!resultActionsReady()) return;
       audio.unlock();
       startGame();
       return;
@@ -1909,6 +1952,9 @@ function updateLaserWeapon(dt) {
           glow: true,
         },
       );
+    }
+    if (G.sunAutoAttack && p.laserCharge >= 1) {
+      releaseSolarCharge();
     }
     refreshAbilityUI();
   }
@@ -4314,6 +4360,8 @@ function gameOver() {
   el.goLevel.textContent = String(G.level);
   el.goKills.textContent = String(G.kills);
   el.bossWrap.classList.add("hidden");
+  el.hud.classList.add("hidden");
+  lockResultActions(el.gameover);
   el.gameover.classList.remove("hidden");
 }
 
@@ -4336,8 +4384,37 @@ function winGame() {
   el.winLevel.textContent = String(G.level);
   el.winKills.textContent = String(G.kills);
   el.bossWrap.classList.add("hidden");
+  lockResultActions(el.victory);
   el.victory.classList.remove("hidden");
   el.hud.classList.add("hidden");
+}
+
+function resultActionsReady() {
+  return performance.now() >= resultLockedUntil;
+}
+
+function lockResultActions(overlay) {
+  clearTimeout(resultLockTimeout);
+  resultLockedUntil = performance.now() + RESULT_INPUT_LOCK_MS;
+  overlay.classList.add("result-locked");
+  const buttons = overlay.querySelectorAll("button");
+  for (const button of buttons) button.disabled = true;
+  resultLockTimeout = window.setTimeout(() => {
+    resultLockedUntil = 0;
+    overlay.classList.remove("result-locked");
+    for (const button of buttons) button.disabled = false;
+  }, RESULT_INPUT_LOCK_MS);
+}
+
+function clearResultLock() {
+  clearTimeout(resultLockTimeout);
+  resultLockedUntil = 0;
+  for (const overlay of [el.gameover, el.victory]) {
+    overlay.classList.remove("result-locked");
+    for (const button of overlay.querySelectorAll("button")) {
+      button.disabled = false;
+    }
+  }
 }
 
 function showToast(text, kind = "", duration = 2400) {
@@ -6682,6 +6759,7 @@ window.__starGame = {
       laserState: G.player.laserState,
       laserCharge: Math.round(G.player.laserCharge * 100),
       laserShotPower: Math.round((G.player.laserShotPower || 0) * 100),
+      sunAutoAttack: Boolean(G.sunAutoAttack),
       laserProgress: G.player.laserProgress,
       laserSalvoBonus: G.player.laserSalvoBonus,
       summons: G.player.summons.map((s) => s.type),
@@ -6892,6 +6970,7 @@ window.__starGame = {
     };
     selectedPlanetId = "earth";
     selectedDifficultyId = "cruise";
+    sunAutoAttack = false;
     try {
       localStorage.removeItem("planetcore-best");
       localStorage.removeItem("planetcore-endless-best");
@@ -6899,6 +6978,7 @@ window.__starGame = {
       localStorage.removeItem("planetcore-codex");
       localStorage.removeItem("planetcore-last-planet");
       localStorage.removeItem("planetcore-last-difficulty");
+      localStorage.removeItem("planetcore-sun-auto-attack");
     } catch {
       /* ignore */
     }
