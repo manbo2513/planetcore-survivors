@@ -15,7 +15,7 @@ export const PLAYER_BASE = {
   bulletRadius: 4.2,
   pierce: 0,
   crit: 0.05,
-  critMult: 2,
+  critMult: 1.5,
   magnet: 88,
   magnetSpeedMult: 1,
   regen: 0,
@@ -50,6 +50,20 @@ export const PLAYER_BASE = {
   warpRechargeTime: 3,
   warpDamageMult: 1,
   eventHorizonMult: 1,
+  heavyDamageMult: 1,
+  satelliteArsenal: false,
+  spaceStationLevel: 0,
+  solarFlareImpact: false,
+  solarStillChargeMult: 1,
+  solarBulletClear: false,
+  solarClearCharged: false,
+  voidKillExtend: false,
+  solarRadialSalvo: false,
+  spaceStationAngle: 0,
+  spaceStationDropCd: 9,
+  voidCollapseScaleBonus: 0,
+  voidCollapseExtension: 0,
+  voidCollapseKills: 0,
 };
 
 export const ENEMY_TYPES = {
@@ -179,11 +193,11 @@ export const UPGRADES = [
     id: "damage",
     name: "星核裂变",
     icon: "✦",
-    desc: "造成的所有伤害提高 30%。",
+    desc: "造成的所有伤害提高 20%。",
     scope: "普攻 / 激光 / 召唤物 / 超新星 / 引力与星球技能",
     max: 5,
     apply(p) {
-      p.damage *= 1.3;
+      p.damage *= 1.2;
     },
   },
   {
@@ -264,11 +278,22 @@ export const UPGRADES = [
     id: "crit",
     name: "暴击星尘",
     icon: "✧",
-    desc: "暴击率提高 10%，暴击造成双倍伤害。",
+    desc: "暴击率提高 10%，暴击造成 1.5 倍伤害。",
     scope: "子弹 / 激光",
     max: 4,
     apply(p) {
       p.crit += 0.1;
+    },
+  },
+  {
+    id: "heavyHunter",
+    name: "巨构猎手",
+    icon: "⌖",
+    desc: "对精英和 Boss 造成的伤害提高 25%。",
+    scope: "所有伤害中对精英 / Boss 的部分",
+    max: 2,
+    apply(p) {
+      p.heavyDamageMult *= 1.25;
     },
   },
   {
@@ -372,6 +397,33 @@ export const UPGRADES = [
     },
   },
   {
+    id: "weaponDiversity",
+    name: "武器多元化",
+    icon: "✣",
+    desc: "人造卫星会随机使用普通弹、范围导弹或短蓄力贯穿激光攻击。",
+    scope: "地球人造卫星",
+    max: 1,
+    rare: true,
+    planets: ["earth"],
+    apply(p) {
+      p.satelliteArsenal = true;
+    },
+  },
+  {
+    id: "starRiverDream",
+    name: "星河追梦",
+    icon: "✧",
+    desc: "部署一座环绕地球的空间站；人造卫星攻速 +25%、伤害 +20%，空间站每 9 秒生产爱心和少量星尘。",
+    scope: "地球空间站 / 人造卫星",
+    max: 1,
+    rare: true,
+    planets: ["earth"],
+    apply(p) {
+      p.spaceStationLevel = 1;
+      p.spaceStationDropCd = 4;
+    },
+  },
+  {
     id: "stormEngine",
     name: "风暴引擎",
     icon: "🌀",
@@ -389,14 +441,39 @@ export const UPGRADES = [
     id: "laserFocus",
     name: "光束聚焦",
     icon: "▮",
-    desc: "宽度 +22%，伤害 +18%。",
+    desc: "激光伤害 +25%，宽度 -10%。",
     scope: "太阳激光",
     max: 3,
     rare: true,
     planets: ["sun"],
     apply(p) {
-      p.laserWidth *= 1.22;
-      p.laserDamageMult *= 1.18;
+      p.laserWidth *= 0.9;
+      p.laserDamageMult *= 1.25;
+    },
+  },
+  {
+    id: "stillSunCharge",
+    name: "静日聚能",
+    icon: "◉",
+    desc: "静止不动时，日冕的充能速度提高 10%。",
+    scope: "太阳自动蓄力",
+    max: 3,
+    planets: ["sun"],
+    apply(p) {
+      p.solarStillChargeMult *= 1.1;
+    },
+  },
+  {
+    id: "solarBulletClear",
+    name: "日冕净界",
+    icon: "◌",
+    desc: "日冕每次蓄满时清除全屏敌弹。",
+    scope: "太阳满蓄力",
+    max: 1,
+    rare: true,
+    planets: ["sun"],
+    apply(p) {
+      p.solarBulletClear = true;
     },
   },
   {
@@ -445,14 +522,41 @@ export const UPGRADES = [
     id: "prism",
     name: "分光棱镜",
     icon: "⋔",
-    desc: "额外增加 1 条射线，伤害提高 6%。",
+    desc: "过载攻击额外增加 1 条射线，伤害提高 5%。",
     scope: "太阳过载射击",
-    max: 2,
+    max: 3,
     rare: true,
     planets: ["sun"],
     apply(p) {
       p.laserSalvoBonus += 1;
-      p.laserDamageMult *= 1.06;
+      p.laserDamageMult *= 1.05;
+    },
+  },
+  {
+    id: "solarFlareImpact",
+    name: "耀核冲击",
+    icon: "☀",
+    desc: "释放过载攻击时，同时触发一次太阳耀斑。",
+    scope: "太阳过载射击",
+    max: 1,
+    rare: true,
+    planets: ["sun"],
+    apply(p) {
+      p.solarFlareImpact = true;
+    },
+  },
+  {
+    id: "solarRadialSalvo",
+    name: "无界耀变",
+    icon: "✺",
+    desc: "过载攻击额外增加 5 条射线，并取消瞄准角度限制，射线会向四周散射。",
+    scope: "太阳过载射击",
+    max: 1,
+    rare: true,
+    planets: ["sun"],
+    apply(p) {
+      p.laserSalvoBonus += 5;
+      p.solarRadialSalvo = true;
     },
   },
   {
@@ -480,6 +584,19 @@ export const UPGRADES = [
     planets: ["voidstar"],
     apply(p) {
       p.eventHorizonMult *= 1.3;
+    },
+  },
+  {
+    id: "voidProliferation",
+    name: "奇点增殖",
+    icon: "◍",
+    desc: "黑洞期间每击杀 1 个敌人延长 0.18 秒并扩大 1.5% 范围；最多延长 3 秒、扩大 45%。",
+    scope: "暗星黑洞",
+    max: 1,
+    rare: true,
+    planets: ["voidstar"],
+    apply(p) {
+      p.voidKillExtend = true;
     },
   },
 ];

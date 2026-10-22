@@ -375,8 +375,6 @@ function makePlayer(planet) {
     laserTarget: null,
     laserHit: new Set(),
     warpGuard: 0,
-    emergencyWarpCd: 0,
-    emergencyWarpMax: 9,
     warpChargesMax: mods.warpChargesMax || 3,
     warpCharges: mods.warpChargesMax || 3,
     warpRechargeTime: mods.warpRechargeTime || 3,
@@ -479,6 +477,7 @@ function freshGame(planet, difficulty) {
     flarePulseTimer: 0,
     warpTrails: [],
     warpGhosts: [],
+    satelliteLaserVisuals: [],
     laserScars: [],
     singularities: [],
     endlessBossKills: 0,
@@ -999,6 +998,9 @@ function startVoidCollapse() {
   p.voidCollapseActive = true;
   p.voidCollapseTick = 0;
   p.voidCollapsePull = 0;
+  p.voidCollapseScaleBonus = 0;
+  p.voidCollapseExtension = 0;
+  p.voidCollapseKills = 0;
   p.gravityRechargeDelay = 0.8;
   p.invuln = Math.max(p.invuln, 0.2);
   showToast("绝对塌缩 · 黑洞展开", "good", 1800);
@@ -1933,9 +1935,11 @@ function updateLaserWeapon(dt) {
       p.laserAngle = Math.atan2(aimY - p.y, aimX - p.x);
     }
     p.laserTarget = target;
+    const stationary = Math.hypot(p.vx, p.vy) < 6;
+    const chargeSpeed = stationary ? p.solarStillChargeMult : 1;
     p.laserCharge = Math.min(
       1,
-      p.laserCharge + dt / Math.max(0.35, p.laserChargeTime),
+      p.laserCharge + (dt * chargeSpeed) / Math.max(0.35, p.laserChargeTime),
     );
     if (Math.random() < dt * 34) {
       const along = rand(80, 620);
@@ -1953,11 +1957,53 @@ function updateLaserWeapon(dt) {
         },
       );
     }
+    if (p.laserCharge >= 1 && p.solarBulletClear && !p.solarClearCharged) {
+      clearSolarBullets();
+    }
     if (G.sunAutoAttack && p.laserCharge >= 1) {
       releaseSolarCharge();
     }
     refreshAbilityUI();
   }
+}
+
+function clearSolarBullets() {
+  const p = G.player;
+  p.solarClearCharged = true;
+  let cleared = 0;
+  for (const bullet of G.enemyBullets) {
+    if (bullet.dead) continue;
+    bullet.dead = true;
+    cleared += 1;
+    if (cleared <= 36) {
+      addParticle(bullet.x, bullet.y, {
+        color: "#fff2b0",
+        size: rand(1.4, 2.8),
+        life: rand(0.25, 0.5),
+        vx: rand(-70, 70),
+        vy: rand(-70, 70),
+        glow: true,
+      });
+    }
+  }
+  G.shockwaves.push({
+    x: p.x,
+    y: p.y,
+    r: 30,
+    maxR: 560,
+    life: 0.62,
+    maxLife: 0.62,
+    damage: 0,
+    hit: new Set(),
+    color: [255, 233, 166],
+  });
+  G.flash = Math.max(G.flash, 0.26);
+  addText(p.x, p.y - p.radius - 18, `日冕净界 · 清弹 ${cleared}`, {
+    color: "#ffe6a8",
+    size: 13,
+    life: 0.9,
+  });
+  audio.perfectRelease();
 }
 
 function startLaserSequence(salvo, chargePower = 1) {
@@ -1966,7 +2012,10 @@ function startLaserSequence(salvo, chargePower = 1) {
   const angles = salvo
     ? Array.from(
         { length: salvoCount },
-        () => p.laserAngle + rand(-Math.PI / 12, Math.PI / 12),
+        () =>
+          p.solarRadialSalvo
+            ? rand(0, TAU)
+            : p.laserAngle + rand(-Math.PI / 12, Math.PI / 12),
       )
     : [p.laserAngle];
   p.laserState = "firing";
@@ -1977,6 +2026,7 @@ function startLaserSequence(salvo, chargePower = 1) {
   p.laserTimer = (angles.length - 1) * 0.09 + 0.3;
   p.laserShotPower = clamp(chargePower, 0.08, 1);
   p.laserCharge = 1;
+  p.solarClearCharged = false;
   if (salvo) {
     p.laserProgress = 0;
     audio.laserSalvo();
@@ -1985,6 +2035,14 @@ function startLaserSequence(salvo, chargePower = 1) {
       size: 16,
       life: 0.9,
     });
+    if (p.solarFlareImpact) {
+      flarePulse();
+      addText(p.x, p.y - p.radius - 42, "耀核冲击", {
+        color: "#fff3c4",
+        size: 17,
+        life: 1.1,
+      });
+    }
   } else {
     p.laserProgress += 1;
   }
@@ -2071,7 +2129,7 @@ function fireLaserBeam(beamAngle, salvo = false, index = 0) {
     salvo,
     width: beamWidth,
   });
-  if (p.laserVisuals.length > 8) p.laserVisuals.shift();
+  if (p.laserVisuals.length > 18) p.laserVisuals.shift();
   if (G.breakthroughs.solarScar) {
     G.laserScars.push({
       x1: p.x,
@@ -2114,6 +2172,14 @@ function updateBullets(dt) {
   const p = G.player;
   for (const b of G.bullets) {
     if (b.dead) continue;
+    if (b.missile && b.target && !b.target.dead) {
+      const speed = Math.hypot(b.vx, b.vy) || 355;
+      const desired = Math.atan2(b.target.y - b.y, b.target.x - b.x);
+      let diff = ((desired - b.angle + Math.PI) % TAU + TAU) % TAU - Math.PI;
+      b.angle += clamp(diff, -3.8 * dt, 3.8 * dt);
+      b.vx = Math.cos(b.angle) * speed;
+      b.vy = Math.sin(b.angle) * speed;
+    }
     b.px = b.x;
     b.py = b.y;
     b.x += b.vx * dt;
@@ -2130,6 +2196,11 @@ function updateBullets(dt) {
       if (b.hitSet?.has(e)) continue;
       const rr = b.r + e.r;
       if (dist2(b.x, b.y, e.x, e.y) > rr * rr) continue;
+      if (b.missile) {
+        explodeSummonMissile(b);
+        b.dead = true;
+        break;
+      }
 
       const crit = Math.random() < p.crit;
       const dmg = b.damage * (crit ? p.critMult : 1);
@@ -2154,6 +2225,36 @@ function updateBullets(dt) {
   }
 }
 
+function explodeSummonMissile(missile) {
+  const radius = missile.blastRadius || 72;
+  for (const enemy of G.enemies) {
+    if (enemy.dead) continue;
+    if (dist2(missile.x, missile.y, enemy.x, enemy.y) > (radius + enemy.r * 0.35) ** 2) {
+      continue;
+    }
+    damageEnemy(enemy, missile.damage, {
+      color: "#ffd166",
+      sourceX: missile.x,
+      sourceY: missile.y,
+      knockback: enemy.boss ? 0 : 24 / Math.max(0.5, enemy.mass),
+    });
+  }
+  G.shockwaves.push({
+    x: missile.x,
+    y: missile.y,
+    r: 8,
+    maxR: radius,
+    life: 0.38,
+    maxLife: 0.38,
+    damage: 0,
+    hit: new Set(),
+    color: [255, 209, 102],
+  });
+  burst(missile.x, missile.y, "#ffd166", 18, 150, 3, 0.5);
+  G.shake = Math.max(G.shake, 4);
+  audio.explode(0.6);
+}
+
 function damageEnemy(e, amount, opts = {}) {
   if (e.dead) return;
   let finalAmount = amount;
@@ -2173,6 +2274,9 @@ function damageEnemy(e, amount, opts = {}) {
       });
       burst(e.x, e.y, "#8fd6ff", 5, 70, 1.8, 0.25);
     }
+  }
+  if ((e.elite || e.boss) && G?.player?.heavyDamageMult) {
+    finalAmount *= G.player.heavyDamageMult;
   }
   e.hp -= finalAmount;
   e.hitFlash = 0.12;
@@ -2198,6 +2302,28 @@ function killEnemy(e) {
   if (e.dead) return;
   e.dead = true;
   G.kills += 1;
+  const p = G.player;
+  if (p?.voidCollapseActive && p.voidKillExtend) {
+    p.voidCollapseKills += 1;
+    const addedTime = Math.min(
+      0.18,
+      Math.max(0, 3 - p.voidCollapseExtension),
+    );
+    if (addedTime > 0) {
+      p.voidCollapseExtension += addedTime;
+      p.gravityEnergy = Math.min(
+        p.gravityMax + p.voidCollapseDrain * 3,
+        p.gravityEnergy + p.voidCollapseDrain * addedTime,
+      );
+    }
+    p.voidCollapseScaleBonus = Math.min(
+      0.45,
+      p.voidCollapseScaleBonus + 0.015,
+    );
+    if (Math.random() < 0.35) {
+      burst(e.x, e.y, "#e7dcff", 8, 85, 2.4, 0.4);
+    }
+  }
   markCodex("enemies", e.type);
   G.shake = Math.min(28, G.shake + (e.boss ? 26 : e.elite ? 9 : 1.1));
   const size = e.boss ? 4 : e.elite ? 2.2 : e.r / 16;
@@ -2498,6 +2624,10 @@ function addXp(amount) {
 
 function updateSummons(dt) {
   const p = G.player;
+  for (const visual of G.satelliteLaserVisuals) visual.life -= dt;
+  G.satelliteLaserVisuals = G.satelliteLaserVisuals.filter(
+    (visual) => visual.life > 0,
+  );
   if (p.summons.length === 0 && p.satelliteMax <= 0) return;
 
   const satellites = p.summons.filter((summon) => summon.type === "satellite").length;
@@ -2517,10 +2647,22 @@ function updateSummons(dt) {
   for (const summon of p.summons) {
     const speed = summon.type === "moon" ? 0.72 : 1.05;
     summon.angle += dt * speed;
-    summon.fireCd -= dt;
-    if (summon.fireCd > 0) continue;
     const sx = p.x + Math.cos(summon.angle) * summon.orbit;
     const sy = p.y + Math.sin(summon.angle) * summon.orbit;
+    if (summon.type === "satellite" && summon.beamCharge > 0) {
+      const beamTarget = summonTarget(sx, sy, 650);
+      if (beamTarget) {
+        summon.beamAngle = Math.atan2(beamTarget.y - sy, beamTarget.x - sx);
+      }
+      summon.beamCharge -= dt;
+      if (summon.beamCharge <= 0) {
+        fireSatelliteLaser(sx, sy, summon);
+        summon.beamCharge = 0;
+      }
+      continue;
+    }
+    summon.fireCd -= dt;
+    if (summon.fireCd > 0) continue;
     const target = summonTarget(sx, sy, summon.type === "moon" ? 680 : 600);
     if (!target) continue;
     const angle = Math.atan2(target.y - sy, target.x - sx);
@@ -2559,11 +2701,57 @@ function updateSummons(dt) {
       p.summonShots += 1;
       continue;
     }
+    const stationRate = p.spaceStationLevel > 0 ? 1.25 : 1;
+    const stationDamage = p.spaceStationLevel > 0 ? 1.2 : 1;
+    if (p.satelliteArsenal) {
+      summon.weaponCycle = Math.floor(Math.random() * 3);
+      if (summon.weaponCycle === 1) {
+        G.bullets.push({
+          x: sx,
+          y: sy,
+          px: sx,
+          py: sy,
+          vx: Math.cos(angle) * 355,
+          vy: Math.sin(angle) * 355,
+          r: Math.max(4.4, p.bulletRadius * 1.05),
+          damage:
+            p.damage * p.summonDamageMult * stationDamage * 0.9,
+          pierce: 0,
+          hits: 0,
+          life: 2,
+          dead: false,
+          angle,
+          target,
+          missile: true,
+          blastRadius: 72,
+          summon: true,
+        });
+        summon.fireCd =
+          (2.25 /
+            (p.summonFireMult * overdriveRate * stationRate)) *
+          rand(0.9, 1.1);
+        p.summonShots += 1;
+        burst(sx, sy, "#ffd166", 4, 65, 2, 0.28);
+        continue;
+      }
+      if (summon.weaponCycle === 2) {
+        summon.beamCharge = Math.max(0.24, 0.42 / p.summonFireMult);
+        summon.beamChargeMax = summon.beamCharge;
+        summon.beamAngle = angle;
+        summon.fireCd =
+          (2.4 /
+            (p.summonFireMult * overdriveRate * stationRate)) *
+          rand(0.92, 1.08);
+        burst(sx, sy, "#9beeff", 6, 55, 1.8, 0.3);
+        continue;
+      }
+    }
     const arrayBreak = Boolean(G.breakthroughs.earthArray);
     const shots = arrayBreak ? 2 : 1;
     const damage =
       p.damage *
       p.summonDamageMult *
+      stationDamage *
       (summon.type === "moon" ? 0.55 : 0.4) *
       (arrayBreak ? 0.8 : 1);
     for (let shot = 0; shot < shots; shot += 1) {
@@ -2587,9 +2775,52 @@ function updateSummons(dt) {
       p.summonShots += 1;
     }
     summon.fireCd =
-      (1.65 / (p.summonFireMult * overdriveRate)) * rand(0.9, 1.1);
+      (1.65 / (p.summonFireMult * overdriveRate * stationRate)) *
+      rand(0.9, 1.1);
     burst(sx, sy, summon.type === "moon" ? "#e7f4ff" : "#9beeff", 2, 40, 1.6, 0.22);
   }
+}
+
+function fireSatelliteLaser(sx, sy, summon) {
+  const p = G.player;
+  const target = summonTarget(sx, sy, 680);
+  const angle = target
+    ? Math.atan2(target.y - sy, target.x - sx)
+    : summon.beamAngle || 0;
+  const range = 680;
+  const width = Math.max(7, p.laserWidth * 0.36);
+  const stationDamage = p.spaceStationLevel > 0 ? 1.2 : 1;
+  const damage = p.damage * p.summonDamageMult * stationDamage * 0.78;
+  const dx = Math.cos(angle);
+  const dy = Math.sin(angle);
+  for (const enemy of G.enemies) {
+    if (enemy.dead) continue;
+    const ex = enemy.x - sx;
+    const ey = enemy.y - sy;
+    const along = ex * dx + ey * dy;
+    if (along < 0 || along > range) continue;
+    const perpendicular = Math.abs(ex * dy - ey * dx);
+    if (perpendicular > width + enemy.r) continue;
+    const crit = Math.random() < p.crit;
+    damageEnemy(enemy, damage * (crit ? p.critMult : 1), {
+      crit,
+      color: "#9beeff",
+      sourceX: sx,
+      sourceY: sy,
+      ignoreShield: false,
+    });
+  }
+  G.satelliteLaserVisuals.push({
+    x1: sx,
+    y1: sy,
+    x2: sx + dx * range,
+    y2: sy + dy * range,
+    width,
+    life: 0.18,
+    maxLife: 0.18,
+  });
+  burst(sx, sy, "#bff6ff", 8, 95, 2.2, 0.34);
+  p.summonShots += 1;
 }
 
 function addSatellite() {
@@ -2600,6 +2831,9 @@ function addSatellite() {
     angle: rand(0, TAU),
     orbit: 55 + count * 13,
     fireCd: rand(0.4, 1.1),
+    weaponCycle: 0,
+    beamCharge: 0,
+    beamAngle: 0,
   });
   showToast(`人造卫星 ${count + 1} 号入轨`, "good", 2000);
   burst(p.x, p.y, "#9beeff", 24, 160, 3, 0.65);
@@ -2620,6 +2854,9 @@ function launchSatelliteBomb() {
     angle: source.angle + Math.PI + rand(-0.25, 0.25),
     orbit: 55 + replacementCount * 13,
     fireCd: rand(0.5, 1.2),
+    weaponCycle: 0,
+    beamCharge: 0,
+    beamAngle: 0,
   });
   burst(sx, sy, "#9beeff", 16, 120, 2.6, 0.5);
   const target = summonTarget(sx, sy, 780);
@@ -2941,7 +3178,7 @@ function updatePlanetAbilityState(dt) {
 
 function updateVoidCollapse(dt) {
   const p = G.player;
-  const radius = 230 * p.eventHorizonMult;
+  const radius = 230 * p.eventHorizonMult * (1 + p.voidCollapseScaleBonus);
   p.gravityEnergy = Math.max(0, p.gravityEnergy - p.voidCollapseDrain * dt);
   p.invuln = Math.max(p.invuln, 0.16);
   p.voidCollapseTick -= dt;
@@ -2999,7 +3236,7 @@ function finishVoidCollapse() {
   p.gravityEnergy = 0;
   p.gravityRechargeDelay = 1.1;
   p.invuln = Math.max(p.invuln, 0.8);
-  const radius = 300 * p.eventHorizonMult;
+  const radius = 300 * p.eventHorizonMult * (1 + p.voidCollapseScaleBonus);
   let survivors = 0;
   for (const e of G.enemies) {
     if (e.dead) continue;
@@ -3160,7 +3397,9 @@ function releaseGravity(exhausted) {
 
 function updatePlanetPassive(dt) {
   const p = G.player;
-  if (p.planetId === "jupiter") {
+  if (p.planetId === "earth") {
+    updateSpaceStation(dt);
+  } else if (p.planetId === "jupiter") {
     p.stormTimer -= dt;
     if (p.stormTimer <= 0) {
       p.stormTimer = p.stormInterval;
@@ -3198,6 +3437,27 @@ function updatePlanetPassive(dt) {
   }
 }
 
+function updateSpaceStation(dt) {
+  const p = G.player;
+  if (p.spaceStationLevel <= 0) return;
+  p.spaceStationAngle += dt * 0.48;
+  p.spaceStationDropCd -= dt;
+  if (p.spaceStationDropCd > 0) return;
+  p.spaceStationDropCd = 9;
+  const sx = p.x + Math.cos(p.spaceStationAngle) * 148;
+  const sy = p.y + Math.sin(p.spaceStationAngle) * 148;
+  dropGem(sx, sy, 1, "heart");
+  for (let i = 0; i < 4; i += 1) {
+    dropGem(sx + rand(-14, 14), sy + rand(-14, 14), 1);
+  }
+  addText(sx, sy - 18, "空间站补给", {
+    color: "#bff6ff",
+    size: 12,
+    life: 0.9,
+  });
+  burst(sx, sy, "#9beeff", 16, 105, 2.6, 0.5);
+}
+
 function updateEventHorizon(dt) {
   const p = G.player;
   if (p.warpCharges < p.warpChargesMax) {
@@ -3214,7 +3474,6 @@ function updateEventHorizon(dt) {
     p.warpRecharge = 0;
   }
   p.warpGuard = Math.max(0, p.warpGuard - dt);
-  p.emergencyWarpCd = Math.max(0, p.emergencyWarpCd - dt);
   p.horizonTimer -= dt;
   const radius = 132 * p.eventHorizonMult;
   let closeHits = 0;
@@ -3267,33 +3526,6 @@ function updateEventHorizon(dt) {
     }
   }
 
-  if (!p.voidCollapseActive && p.emergencyWarpCd <= 0) {
-    let threat = null;
-    let best = 150 * 150;
-    for (const e of G.enemies) {
-      if (e.dead || (!e.elite && !e.boss)) continue;
-      const d = dist2(e.x, e.y, p.x, p.y);
-      if (d < best) {
-        best = d;
-        threat = e;
-      }
-    }
-    if (threat) {
-      let dx = p.x - threat.x;
-      let dy = p.y - threat.y;
-      const d = Math.hypot(dx, dy) || 1;
-      if (d < 2) {
-        const angle = rand(0, TAU);
-        dx = Math.cos(angle);
-        dy = Math.sin(angle);
-      }
-      const tx = p.x + (dx / d) * 280;
-      const ty = p.y + (dy / d) * 280;
-      performWarp(tx, ty, true);
-      return;
-    }
-  }
-
   for (const gem of G.gems) {
     if (dist2(gem.x, gem.y, p.x, p.y) < 270 * 270) gem.pulling = true;
   }
@@ -3335,10 +3567,10 @@ function warpTo(screenX, screenY) {
     tx = p.x + (dx / distance) * maxRange;
     ty = p.y + (dy / distance) * maxRange;
   }
-  performWarp(tx, ty, false);
+  performWarp(tx, ty);
 }
 
-function performWarp(tx, ty, emergency = false) {
+function performWarp(tx, ty) {
   const p = G.player;
   if (state !== "playing" || p.planetId !== "voidstar" || p.voidCollapseActive) return;
   const fromX = p.x;
@@ -3350,12 +3582,8 @@ function performWarp(tx, ty, emergency = false) {
   G.cam.x = tx;
   G.cam.y = ty;
   if (p.warpCharges > 0) p.warpCharges -= 1;
-  p.invuln = Math.max(p.invuln, emergency ? 1.05 : 0.85);
-  p.warpGuard = emergency ? 1.3 : 1;
-  if (emergency) {
-    p.emergencyWarpCd = p.emergencyWarpMax;
-    showToast("应急跃迁 · 重质量目标已被排斥", "good", 1800);
-  }
+  p.invuln = Math.max(p.invuln, 0.85);
+  p.warpGuard = 1;
   p.horizonTimer = 0;
   warpBurst(tx, ty, damage, 132);
   damageAlongWarpPath(fromX, fromY, tx, ty, damage * 1.2, 42);
@@ -4299,6 +4527,11 @@ function selectUpgrade(upgrade) {
     markCodex("upgrades", upgrade.id);
     G.upgradeLevels[upgrade.id] = (G.upgradeLevels[upgrade.id] || 0) + 1;
     upgrade.apply(G.player);
+    if (upgrade.id === "starRiverDream") {
+      showToast("星河追梦 · 空间站已入轨", "good", 2200);
+    } else if (upgrade.id === "weaponDiversity") {
+      showToast("武器多元化 · 卫星武器库已解锁", "good", 2200);
+    }
   }
   G.pendingLevels -= 1;
   G.flash = 0.35;
@@ -4520,6 +4753,8 @@ function render() {
   drawPlayer();
   drawLaser();
   drawSummons();
+  drawSatelliteLasers();
+  drawSpaceStation();
   drawSatelliteBombs();
   drawWarpGuard();
   drawBullets();
@@ -5286,14 +5521,14 @@ function drawSummons() {
       ctx.arc(0, 0, 12.5, 0, TAU);
       ctx.stroke();
     } else {
-      const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 24);
+      const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, 18);
       glow.addColorStop(0, "rgba(120, 225, 255, 0.22)");
       glow.addColorStop(1, "rgba(80, 170, 255, 0)");
       ctx.fillStyle = glow;
       ctx.beginPath();
-      ctx.arc(0, 0, 24, 0, TAU);
+      ctx.arc(0, 0, 18, 0, TAU);
       ctx.fill();
-      ctx.scale(0.9, 0.9);
+      ctx.scale(0.62, 0.62);
       ctx.rotate(summon.angle + Math.PI / 2);
       const panel = ctx.createLinearGradient(-20, 0, 20, 0);
       panel.addColorStop(0, "#2b4f74");
@@ -5324,7 +5559,98 @@ function drawSummons() {
       }
     }
     ctx.restore();
+    if (summon.type === "satellite" && summon.beamCharge > 0) {
+      const progress =
+        1 -
+        clamp(summon.beamCharge / Math.max(0.01, summon.beamChargeMax || 0.42), 0, 1);
+      const dx = Math.cos(summon.beamAngle || 0);
+      const dy = Math.sin(summon.beamAngle || 0);
+      ctx.save();
+      ctx.strokeStyle = `rgba(155, 238, 255, ${0.18 + progress * 0.42})`;
+      ctx.lineWidth = 1 + progress * 2;
+      ctx.setLineDash([7, 7]);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + dx * 680, sy + dy * 680);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
   }
+}
+
+function drawSatelliteLasers() {
+  if (!G.satelliteLaserVisuals?.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.lineCap = "round";
+  for (const laser of G.satelliteLaserVisuals) {
+    const alpha = clamp(laser.life / laser.maxLife, 0, 1);
+    const x1 = w2sX(laser.x1);
+    const y1 = w2sY(laser.y1);
+    const x2 = w2sX(laser.x2);
+    const y2 = w2sY(laser.y2);
+    ctx.strokeStyle = `rgba(60, 190, 255, ${alpha * 0.24})`;
+    ctx.lineWidth = laser.width * 2.2;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(170, 245, 255, ${alpha * 0.82})`;
+    ctx.lineWidth = laser.width;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(245, 255, 255, ${alpha})`;
+    ctx.lineWidth = Math.max(1.4, laser.width * 0.18);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawSpaceStation() {
+  const p = G.player;
+  if (p.spaceStationLevel <= 0) return;
+  const sx = w2sX(p.x + Math.cos(p.spaceStationAngle) * 148);
+  const sy = w2sY(p.y + Math.sin(p.spaceStationAngle) * 148);
+  ctx.save();
+  ctx.translate(sx, sy);
+  const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 34);
+  glow.addColorStop(0, "rgba(155, 238, 255, 0.28)");
+  glow.addColorStop(1, "rgba(80, 170, 255, 0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, 34, 0, TAU);
+  ctx.fill();
+  ctx.rotate(p.spaceStationAngle + Math.PI / 2);
+  const panel = ctx.createLinearGradient(-25, 0, 25, 0);
+  panel.addColorStop(0, "#244869");
+  panel.addColorStop(0.5, "#9beeff");
+  panel.addColorStop(1, "#244869");
+  ctx.fillStyle = panel;
+  ctx.fillRect(-24, -5, 14, 10);
+  ctx.fillRect(10, -5, 14, 10);
+  ctx.fillStyle = "#d9f8ff";
+  ctx.fillRect(-6, -6, 12, 12);
+  ctx.fillStyle = "#315676";
+  ctx.fillRect(-3, -3, 6, 6);
+  ctx.strokeStyle = "rgba(200, 247, 255, 0.75)";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(0, 0, 9, 0, TAU);
+  ctx.stroke();
+  const blink = Math.sin(G.time * 5.5) > 0;
+  if (blink) {
+    ctx.fillStyle = "#ffd166";
+    ctx.beginPath();
+    ctx.arc(0, -10, 2, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawSatelliteBombs() {
@@ -5899,6 +6225,31 @@ function drawBullets() {
   for (const b of G.bullets) {
     const sx = w2sX(b.x);
     const sy = w2sY(b.y);
+    if (b.missile) {
+      const angle = Math.atan2(b.vy, b.vx);
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(angle);
+      ctx.strokeStyle = "rgba(255, 164, 70, 0.45)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(-16, 0);
+      ctx.lineTo(-6, 0);
+      ctx.stroke();
+      ctx.fillStyle = "#ffd166";
+      ctx.beginPath();
+      ctx.moveTo(8, 0);
+      ctx.lineTo(-5, -4.5);
+      ctx.lineTo(-5, 4.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#fff4c9";
+      ctx.beginPath();
+      ctx.arc(3, 0, 1.8, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+      continue;
+    }
     if (b.gravityWave) {
       const angle = Math.atan2(b.vy, b.vx);
       ctx.save();
@@ -6244,9 +6595,7 @@ function drawWarpHud() {
   ctx.fillText(
     ready
       ? `跃迁 ${charges}/${max}`
-      : p.emergencyWarpCd <= 0
-        ? `充能 ${Math.ceil(p.warpRechargeTime - p.warpRecharge)}s · 应急就绪`
-        : `充能 ${Math.ceil(p.warpRechargeTime - p.warpRecharge)}s`,
+      : `充能 ${Math.ceil(p.warpRechargeTime - p.warpRecharge)}s`,
     sx,
     sy - p.radius * 2.35,
   );
@@ -6759,6 +7108,7 @@ window.__starGame = {
       laserState: G.player.laserState,
       laserCharge: Math.round(G.player.laserCharge * 100),
       laserShotPower: Math.round((G.player.laserShotPower || 0) * 100),
+      laserVisuals: G.player.laserVisuals.length,
       sunAutoAttack: Boolean(G.sunAutoAttack),
       laserProgress: G.player.laserProgress,
       laserSalvoBonus: G.player.laserSalvoBonus,
@@ -6767,6 +7117,10 @@ window.__starGame = {
       satelliteBombsLaunched: G.player.satelliteBombsLaunched,
       summonBullets: G.bullets.filter((b) => b.summon).length,
       summonShots: G.player.summonShots,
+      satelliteArsenal: Boolean(G.player.satelliteArsenal),
+      spaceStation: G.player.spaceStationLevel,
+      missileBullets: G.bullets.filter((bullet) => bullet.missile).length,
+      satelliteLasers: G.satelliteLaserVisuals.length,
       level: G.level,
       xp: G.xp,
       xpNext: G.xpNext,
@@ -6780,10 +7134,14 @@ window.__starGame = {
       shieldMax: G.player.shieldMax,
       gravity: Math.round(G.player.gravityEnergy),
       gravityMax: Math.round(G.player.gravityMax),
+      heavyDamageMult: G.player.heavyDamageMult,
       gravityPull: Math.round(G.player.gravityPullMult * 100) / 100,
       gravityActive: G.player.gravityActive,
       earthOverdriveActive: G.player.earthOverdriveActive,
       voidCollapseActive: G.player.voidCollapseActive,
+      voidCollapseScale: G.player.voidCollapseScaleBonus,
+      voidCollapseExtension: G.player.voidCollapseExtension,
+      voidCollapseKills: G.player.voidCollapseKills,
       gravityCharge: Math.round(G.player.gravityCharge * 100),
       gravityCd: Math.round(G.player.gravityReleaseCd * 100) / 100,
       capturedBullets: G.enemyBullets.filter((b) => b.captured).length,
@@ -6794,7 +7152,6 @@ window.__starGame = {
       warpRecharge: Math.round(G.player.warpRecharge * 10) / 10,
       warpRechargeTime: G.player.warpRechargeTime,
       warpGuard: Math.round(G.player.warpGuard * 100) / 100,
-      emergencyWarpCd: Math.round(G.player.emergencyWarpCd * 100) / 100,
       warpTrails: G.warpTrails.length,
       eventHorizon: Math.round(G.player.eventHorizonMult * 100) / 100,
       lastKey,
@@ -6815,6 +7172,9 @@ window.__starGame = {
       upgrades: { ...G.upgradeLevels },
       breakthroughs: Object.keys(G.breakthroughs),
       laserScars: G.laserScars.length,
+      solarBulletClear: G.player.solarBulletClear,
+      solarFlareImpact: G.player.solarFlareImpact,
+      solarRadialSalvo: G.player.solarRadialSalvo,
       singularities: G.singularities.length,
     };
   },
