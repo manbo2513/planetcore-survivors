@@ -781,6 +781,22 @@ button {
   color: #ffd166;
 }
 
+.codex-owner.elite {
+  border: 1px solid rgba(255, 188, 92, 0.62);
+  background: rgba(112, 59, 16, 0.5);
+  color: #ffcf7d;
+  font-weight: 700;
+  box-shadow: 0 0 12px rgba(255, 166, 62, 0.16);
+}
+
+.codex-owner.boss {
+  border: 1px solid rgba(255, 93, 158, 0.68);
+  background: rgba(111, 19, 66, 0.58);
+  color: #ff9fc4;
+  font-weight: 700;
+  box-shadow: 0 0 14px rgba(255, 61, 127, 0.2);
+}
+
 .codex-desc {
   margin: 10px 0 7px;
   font-size: 12px;
