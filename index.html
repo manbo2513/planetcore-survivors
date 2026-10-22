@@ -116,6 +116,25 @@
           <div id="difficultyChoices" class="difficulty-choices"></div>
           <div id="difficultyDesc" class="difficulty-desc"></div>
         </div>
+        <div id="sunAutoOption" class="loadout-option hidden">
+          <div class="loadout-option-copy">
+            <b>自动攻击</b>
+            <span id="sunAutoDescription">开启后，日冕蓄满会自动发射激光</span>
+          </div>
+          <div class="loadout-option-control">
+            <span id="sunAutoState" class="loadout-option-state">关闭</span>
+            <button
+              id="sunAutoBtn"
+              class="toggle-switch"
+              type="button"
+              role="switch"
+              aria-checked="false"
+              aria-label="切换太阳自动攻击"
+            >
+              <span class="toggle-knob"></span>
+            </button>
+          </div>
+        </div>
         <div class="panel-actions loadout-actions">
           <button id="launchBtn" class="primary-btn small" type="button">进入深空</button>
           <button id="loadoutBackBtn" class="ghost-btn" type="button">返回标题</button>
@@ -175,6 +194,7 @@
           <div><span>最终等级</span><b id="goLevel">1</b></div>
           <div><span>击杀数</span><b id="goKills">0</b></div>
         </div>
+        <div class="result-lock-note">战斗结算中 · 操作即将解锁</div>
         <div class="panel-actions">
           <button id="retryBtn" class="primary-btn small" type="button">再点一次星火</button>
           <button id="goMenuBtn" class="ghost-btn" type="button">返回标题</button>
@@ -193,6 +213,7 @@
           <div><span>最终等级</span><b id="winLevel">1</b></div>
           <div><span>击杀数</span><b id="winKills">0</b></div>
         </div>
+        <div class="result-lock-note">战斗结算中 · 操作即将解锁</div>
         <div class="panel-actions">
           <button id="againBtn" class="primary-btn small" type="button">再守一次深空</button>
           <button id="winMenuBtn" class="ghost-btn" type="button">返回标题</button>

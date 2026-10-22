@@ -562,6 +562,86 @@ button {
   margin-top: 2px;
 }
 
+.loadout-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: min(560px, 100%);
+  margin: 0 auto 16px;
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 209, 102, 0.2);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(67, 49, 17, 0.28), rgba(10, 22, 45, 0.68));
+  text-align: left;
+}
+
+.loadout-option-copy b {
+  display: block;
+  color: #ffe6a8;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+.loadout-option-copy span {
+  display: block;
+  margin-top: 3px;
+  color: rgba(190, 209, 230, 0.7);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.loadout-option-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+}
+
+.loadout-option-state {
+  font-size: 11px;
+  color: #8fa6c4;
+}
+
+.toggle-switch {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(143, 166, 196, 0.34);
+  border-radius: 999px;
+  background: rgba(7, 15, 31, 0.85);
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.toggle-switch.active {
+  border-color: rgba(255, 209, 102, 0.72);
+  background: rgba(111, 77, 22, 0.82);
+  box-shadow: 0 0 18px rgba(255, 209, 102, 0.2);
+}
+
+.toggle-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #8fa6c4;
+  transition:
+    transform 0.18s ease,
+    background 0.18s ease;
+}
+
+.toggle-switch.active .toggle-knob {
+  transform: translateX(20px);
+  background: #ffe6a8;
+}
+
 /* Codex */
 
 .codex-overlay {
@@ -1361,6 +1441,23 @@ button {
   backdrop-filter: blur(6px);
 }
 
+.result-overlay.result-locked .panel-actions {
+  pointer-events: none;
+  opacity: 0.48;
+}
+
+.result-lock-note {
+  margin: -13px auto 18px;
+  min-height: 16px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: rgba(255, 209, 102, 0.72);
+}
+
+.result-overlay:not(.result-locked) .result-lock-note {
+  opacity: 0;
+}
+
 .result-panel.danger {
   border-color: rgba(255, 95, 109, 0.26);
 }
@@ -2016,6 +2113,11 @@ button {
 }
 
 @media (max-width: 760px) {
+  .loadout-option {
+    align-items: flex-start;
+    padding: 11px 13px;
+  }
+
   .upgrade-category-bar {
     justify-content: flex-start;
     flex-wrap: nowrap;
