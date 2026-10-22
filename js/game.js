@@ -466,6 +466,12 @@ function freshGame(planet, difficulty) {
     meteorWaveTimer: 0,
     meteorWaveTarget: 0,
     lineHazards: [],
+    safeZones: [],
+    safeZoneWavesRemaining: 0,
+    safeZoneNextTimer: 0,
+    safeZoneWaveNumber: 0,
+    safeZoneTotalWaves: 0,
+    safeZoneWarningDuration: 0,
     deadlineSpawnTimer: 0,
     hazards: [],
     tideTimer: 0,
@@ -710,6 +716,8 @@ function renderCodex() {
         name: lore.name,
         meta: `威胁 ${lore.threat} · ${type.hp} 基础生命`,
         desc: lore.desc,
+        owner: id === "elite" ? "精英单位" : id === "boss" ? "Boss单位" : "",
+        ownerKind: id === "elite" ? "elite" : id === "boss" ? "boss" : "",
         tip: lore.tip,
         recorded: Boolean(codexProgress.enemies?.[id]),
       });
@@ -1957,9 +1965,6 @@ function updateLaserWeapon(dt) {
         },
       );
     }
-    if (p.laserCharge >= 1 && p.solarBulletClear && !p.solarClearCharged) {
-      clearSolarBullets();
-    }
     if (G.sunAutoAttack && p.laserCharge >= 1) {
       releaseSolarCharge();
     }
@@ -1967,15 +1972,19 @@ function updateLaserWeapon(dt) {
   }
 }
 
-function clearSolarBullets() {
-  const p = G.player;
-  p.solarClearCharged = true;
+function clearBulletsAlongLaser(x1, y1, x2, y2, width) {
   let cleared = 0;
   for (const bullet of G.enemyBullets) {
     if (bullet.dead) continue;
+    if (
+      distanceToSegment(bullet.x, bullet.y, x1, y1, x2, y2) >
+      width + bullet.r
+    ) {
+      continue;
+    }
     bullet.dead = true;
     cleared += 1;
-    if (cleared <= 36) {
+    if (cleared <= 24) {
       addParticle(bullet.x, bullet.y, {
         color: "#fff2b0",
         size: rand(1.4, 2.8),
@@ -1986,24 +1995,7 @@ function clearSolarBullets() {
       });
     }
   }
-  G.shockwaves.push({
-    x: p.x,
-    y: p.y,
-    r: 30,
-    maxR: 560,
-    life: 0.62,
-    maxLife: 0.62,
-    damage: 0,
-    hit: new Set(),
-    color: [255, 233, 166],
-  });
-  G.flash = Math.max(G.flash, 0.26);
-  addText(p.x, p.y - p.radius - 18, `日冕净界 · 清弹 ${cleared}`, {
-    color: "#ffe6a8",
-    size: 13,
-    life: 0.9,
-  });
-  audio.perfectRelease();
+  return cleared;
 }
 
 function startLaserSequence(salvo, chargePower = 1) {
@@ -2026,7 +2018,6 @@ function startLaserSequence(salvo, chargePower = 1) {
   p.laserTimer = (angles.length - 1) * 0.09 + 0.3;
   p.laserShotPower = clamp(chargePower, 0.08, 1);
   p.laserCharge = 1;
-  p.solarClearCharged = false;
   if (salvo) {
     p.laserProgress = 0;
     audio.laserSalvo();
@@ -2073,6 +2064,16 @@ function fireLaserBeam(beamAngle, salvo = false, index = 0) {
   const beamStrength = 0.5 + power * 1.7;
   const dx = Math.cos(beamAngle);
   const dy = Math.sin(beamAngle);
+  const clearedBullets =
+    p.solarBulletClear && power >= 0.97
+      ? clearBulletsAlongLaser(
+          p.x,
+          p.y,
+          p.x + dx * range,
+          p.y + dy * range,
+          beamWidth,
+        )
+      : 0;
   let hits = 0;
   for (const e of G.enemies) {
     if (e.dead) continue;
@@ -2103,6 +2104,13 @@ function fireLaserBeam(beamAngle, salvo = false, index = 0) {
         p.damage * (0.2 + p.laserBurnLevel * 0.16),
       );
     }
+  }
+  if (clearedBullets > 0 && (!salvo || index === 0)) {
+    addText(p.x, p.y - p.radius - 18, `日冕净界 · 清弹 ${clearedBullets}`, {
+      color: "#ffe6a8",
+      size: 13,
+      life: 0.9,
+    });
   }
   G.shake = Math.max(G.shake, salvo ? 4 : 8);
   G.flash = Math.max(G.flash, salvo ? 0.12 : 0.26);
@@ -2172,13 +2180,38 @@ function updateBullets(dt) {
   const p = G.player;
   for (const b of G.bullets) {
     if (b.dead) continue;
-    if (b.missile && b.target && !b.target.dead) {
-      const speed = Math.hypot(b.vx, b.vy) || 355;
-      const desired = Math.atan2(b.target.y - b.y, b.target.x - b.x);
+    if (b.missile) {
+      if (!b.target || b.target.dead) {
+        b.target = nearestEnemy(b.x, b.y, 900);
+      }
+      if (b.target && !b.target.dead) {
+      const speed = Math.min(
+        b.maxSpeed || 480,
+        Math.max(390, Math.hypot(b.vx, b.vy)) + 210 * dt,
+      );
+      const lead = Math.min(0.28, Math.hypot(b.x - b.target.x, b.y - b.target.y) / 1400);
+      const desired = Math.atan2(
+        b.target.y + (b.target.vy || 0) * lead - b.y,
+        b.target.x + (b.target.vx || 0) * lead - b.x,
+      );
       let diff = ((desired - b.angle + Math.PI) % TAU + TAU) % TAU - Math.PI;
-      b.angle += clamp(diff, -3.8 * dt, 3.8 * dt);
+      const turn = (b.turnRate || 6.2) * dt;
+      b.angle += clamp(diff, -turn, turn);
       b.vx = Math.cos(b.angle) * speed;
       b.vy = Math.sin(b.angle) * speed;
+      }
+      b.trailTimer = (b.trailTimer || 0) - dt;
+      if (b.trailTimer <= 0) {
+        b.trailTimer = 0.035;
+        addParticle(b.x, b.y, {
+          color: Math.random() < 0.45 ? "#ffd166" : "#ff9b5c",
+          size: rand(1.4, 2.8),
+          life: rand(0.24, 0.42),
+          vx: -b.vx * 0.05 + rand(-12, 12),
+          vy: -b.vy * 0.05 + rand(-12, 12),
+          glow: true,
+        });
+      }
     }
     b.px = b.x;
     b.py = b.y;
@@ -2668,10 +2701,12 @@ function updateSummons(dt) {
     const angle = Math.atan2(target.y - sy, target.x - sx);
     const overdriveRate = p.earthOverdriveActive ? 2 : 1;
     if (summon.type === "moon") {
-      const moonShots = G.breakthroughs.earthArray ? 2 : 1;
+      const moonShots =
+        p.summonBulletCount * (G.breakthroughs.earthArray ? 2 : 1);
+      const moonDamageScale = moonShots > 1 ? 1 / Math.sqrt(moonShots) : 1;
       for (let shot = 0; shot < moonShots; shot += 1) {
         const shotAngle =
-          angle + (moonShots > 1 ? (shot - (moonShots - 1) / 2) * 0.12 : 0);
+          angle + (moonShots > 1 ? (shot - (moonShots - 1) / 2) * 0.075 : 0);
         G.bullets.push({
           x: sx,
           y: sy,
@@ -2684,7 +2719,7 @@ function updateSummons(dt) {
             p.damage *
             p.summonDamageMult *
             0.72 *
-            (moonShots > 1 ? 0.82 : 1),
+            moonDamageScale,
           pierce: moonShots > 1 ? 6 : 5,
           hits: 0,
           hitSet: new Set(),
@@ -2703,34 +2738,54 @@ function updateSummons(dt) {
     }
     const stationRate = p.spaceStationLevel > 0 ? 1.25 : 1;
     const stationDamage = p.spaceStationLevel > 0 ? 1.2 : 1;
+    const arrayBreak = Boolean(G.breakthroughs.earthArray);
     if (p.satelliteArsenal) {
       summon.weaponCycle = Math.floor(Math.random() * 3);
       if (summon.weaponCycle === 1) {
-        G.bullets.push({
-          x: sx,
-          y: sy,
-          px: sx,
-          py: sy,
-          vx: Math.cos(angle) * 355,
-          vy: Math.sin(angle) * 355,
-          r: Math.max(4.4, p.bulletRadius * 1.05),
-          damage:
-            p.damage * p.summonDamageMult * stationDamage * 0.9,
-          pierce: 0,
-          hits: 0,
-          life: 2,
-          dead: false,
-          angle,
-          target,
-          missile: true,
-          blastRadius: 72,
-          summon: true,
-        });
+        const missileShots =
+          p.summonBulletCount * (arrayBreak ? 2 : 1);
+        const missileDamageScale =
+          missileShots > 1 ? 1 / Math.sqrt(missileShots) : 1;
+        for (let shot = 0; shot < missileShots; shot += 1) {
+          const shotAngle =
+            angle +
+            (missileShots > 1
+              ? (shot - (missileShots - 1) / 2) * 0.11
+              : 0);
+          G.bullets.push({
+            x: sx,
+            y: sy,
+            px: sx,
+            py: sy,
+            vx: Math.cos(shotAngle) * 390,
+            vy: Math.sin(shotAngle) * 390,
+            r: Math.max(4.4, p.bulletRadius * 1.05),
+            damage:
+              p.damage *
+              p.summonDamageMult *
+              stationDamage *
+              0.9 *
+              missileDamageScale,
+            pierce: 0,
+            hits: 0,
+            life: 2.8,
+            dead: false,
+            angle: shotAngle,
+            target,
+            missile: true,
+            turnRate: 6.2,
+            maxSpeed: 480,
+            blastRadius: 72,
+            trailTimer: 0,
+            summon: true,
+          });
+        }
         summon.fireCd =
           (2.25 /
             (p.summonFireMult * overdriveRate * stationRate)) *
           rand(0.9, 1.1);
-        p.summonShots += 1;
+        p.summonShots += missileShots;
+        p.satelliteMissiles += missileShots;
         burst(sx, sy, "#ffd166", 4, 65, 2, 0.28);
         continue;
       }
@@ -2746,14 +2801,14 @@ function updateSummons(dt) {
         continue;
       }
     }
-    const arrayBreak = Boolean(G.breakthroughs.earthArray);
-    const shots = arrayBreak ? 2 : 1;
+    const shots = p.summonBulletCount * (arrayBreak ? 2 : 1);
+    const shotDamageScale = shots > 1 ? 1 / Math.sqrt(shots) : 1;
     const damage =
       p.damage *
       p.summonDamageMult *
       stationDamage *
-      (summon.type === "moon" ? 0.55 : 0.4) *
-      (arrayBreak ? 0.8 : 1);
+      0.4 *
+      shotDamageScale;
     for (let shot = 0; shot < shots; shot += 1) {
       const shotAngle = angle + (shots > 1 ? (shot - (shots - 1) / 2) * 0.055 : 0);
       G.bullets.push({
@@ -2821,6 +2876,7 @@ function fireSatelliteLaser(sx, sy, summon) {
   });
   burst(sx, sy, "#bff6ff", 8, 95, 2.2, 0.34);
   p.summonShots += 1;
+  p.satelliteLaserShots += 1;
 }
 
 function addSatellite() {
@@ -3826,6 +3882,8 @@ function updateEvents(dt) {
         G.activeEvent = null;
         G.riftEnemies = [];
       }
+    } else if (G.activeEvent.id === "safeZone") {
+      updateSafeZoneEvent(dt);
     } else {
       G.activeEvent.time -= dt;
       if (G.activeEvent.time <= 0) G.activeEvent = null;
@@ -3861,7 +3919,6 @@ function updateEvents(dt) {
 
   updateLineHazards(dt);
   updateHazards(dt);
-  if (G.boss) return;
   G.eventTimer -= dt;
   const canTriggerEvent = !G.activeEvent || G.activeEvent.id === "rift";
   if (G.eventTimer <= 0 && G.time > 38 && canTriggerEvent) triggerEvent();
@@ -3876,10 +3933,7 @@ function triggerEvent(forceId = null) {
   } else {
     const weighted = (pool.length ? pool : EVENTS).map((entry) => ({
       event: entry,
-      weight:
-        entry.id === "meteor" || entry.id === "deadline"
-          ? 1 + (power - 1) * 1.6
-          : 1,
+      weight: G.difficulty.eventWeights?.[entry.id] || 1,
     }));
     let roll = Math.random() * weighted.reduce((sum, item) => sum + item.weight, 0);
     event = weighted[0].event;
@@ -3958,6 +4012,139 @@ function triggerEvent(forceId = null) {
     };
     spawnDeadlineLines();
     showToast("赤线封锁 · 观察暗红线预警", "", 2800);
+  } else if (event.id === "safeZone") {
+    const waves = G.difficulty.safeZoneWaves || 2;
+    const warning = G.difficulty.safeZoneWarning || 2.2;
+    G.safeZones = [];
+    G.safeZoneWavesRemaining = waves - 1;
+    G.safeZoneNextTimer = 0;
+    G.safeZoneWaveNumber = 1;
+    G.safeZoneTotalWaves = waves;
+    G.safeZoneWarningDuration = warning;
+    G.activeEvent = {
+      id: event.id,
+      name: event.name,
+      time: waves * (warning + 1.1),
+    };
+    spawnSafeZoneWave();
+  }
+}
+
+function spawnSafeZoneWave() {
+  const p = G.player;
+  const count = G.difficulty.safeZoneCount || 2;
+  const warning = G.difficulty.safeZoneWarning || 2.2;
+  const radius = G.difficulty.safeZoneRadius || 145;
+  const spread = G.difficulty.safeZoneSpread || 240;
+  const baseAngle = rand(0, TAU);
+  G.safeZones = [];
+  for (let i = 0; i < count; i += 1) {
+    const angle =
+      baseAngle + (i * TAU) / count + rand(-0.28, 0.28);
+    const distance =
+      count === 1
+        ? Math.min(spread, radius * 1.25)
+        : rand(radius * 1.15, Math.max(radius * 1.3, spread));
+    const zoneRadius = radius * rand(0.92, 1.08);
+    const x = clamp(
+      p.x + Math.cos(angle) * distance,
+      p.x - W * 0.36,
+      p.x + W * 0.36,
+    );
+    const y = clamp(
+      p.y + Math.sin(angle) * distance,
+      p.y - H * 0.33,
+      p.y + H * 0.33,
+    );
+    G.safeZones.push({
+      x,
+      y,
+      radius: zoneRadius,
+      warning,
+      elapsed: 0,
+      resolved: false,
+      life: warning + 1.2,
+      result: "",
+    });
+  }
+  audio.event();
+  showToast(
+    `星域裁决 · 第 ${G.safeZoneWaveNumber}/${G.safeZoneTotalWaves} 波 · ${warning.toFixed(1)} 秒后裁定`,
+    "",
+    2100,
+  );
+}
+
+function updateSafeZoneEvent(dt) {
+  const p = G.player;
+  if (G.activeEvent) G.activeEvent.time = Math.max(0, G.activeEvent.time - dt);
+  for (const zone of G.safeZones) {
+    zone.elapsed += dt;
+    zone.life -= dt;
+  }
+
+  const warningZone = G.safeZones.find(
+    (zone) => !zone.resolved && zone.elapsed >= zone.warning,
+  );
+  if (warningZone) {
+    const safe = G.safeZones.some(
+      (zone) =>
+        dist2(p.x, p.y, zone.x, zone.y) <= zone.radius * zone.radius,
+    );
+    for (const zone of G.safeZones) {
+      zone.resolved = true;
+      zone.result = safe ? "safe" : "hit";
+      zone.life = Math.min(zone.life, 0.7);
+      G.shockwaves.push({
+        x: zone.x,
+        y: zone.y,
+        r: zone.radius * 0.45,
+        maxR: zone.radius,
+        life: 0.48,
+        maxLife: 0.48,
+        damage: 0,
+        hit: new Set(),
+        color: safe ? [111, 247, 255] : [255, 84, 102],
+      });
+    }
+    if (safe) {
+      addText(p.x, p.y - p.radius - 18, "安全区庇护", {
+        color: "#bffcff",
+        size: 14,
+        life: 1,
+      });
+      G.flash = Math.max(G.flash, 0.18);
+    } else {
+      damagePlayer(
+        70 * (G.difficulty.eventPower || 1),
+        p.x + rand(-40, 40),
+        p.y + rand(-40, 40),
+      );
+      G.hurtFlash = Math.max(G.hurtFlash, 0.85);
+      G.shake = Math.max(G.shake, 16);
+      addText(p.x, p.y - p.radius - 18, "裁决命中", {
+        color: "#ff8fa3",
+        size: 17,
+        life: 1.1,
+      });
+    }
+    G.safeZoneNextTimer = 1.08;
+  }
+
+  if (G.safeZones.length > 0 && G.safeZones.every((zone) => zone.resolved)) {
+    G.safeZoneNextTimer -= dt;
+    if (G.safeZoneNextTimer <= 0 && G.safeZoneWavesRemaining > 0) {
+      G.safeZoneWavesRemaining -= 1;
+      G.safeZoneWaveNumber += 1;
+      spawnSafeZoneWave();
+      G.safeZoneNextTimer = 0;
+    }
+  }
+
+  if (G.activeEvent?.time <= 0) {
+    G.activeEvent = null;
+    G.safeZones = [];
+    G.safeZoneWavesRemaining = 0;
   }
 }
 
@@ -4689,6 +4876,15 @@ function updateHUD(force = false) {
     let eventText = "";
     if (G.activeEvent?.id === "rift") {
       eventText = `虚空裂隙 · 余 ${activeRifts}`;
+    } else if (G.activeEvent?.id === "safeZone") {
+      const warningZone = G.safeZones.find((zone) => !zone.resolved);
+      eventText = warningZone
+        ? `星域裁决 · 第 ${G.safeZoneWaveNumber}/${G.safeZoneTotalWaves} 波 · ${Math.max(
+            0,
+            warningZone.warning - warningZone.elapsed,
+          ).toFixed(1)}s 后裁定`
+        : `星域裁决 · 下一波安全区重组中`;
+      if (activeRifts > 0) eventText += ` · 裂隙 ${activeRifts}`;
     } else if (G.activeEvent) {
       eventText = `${G.activeEvent.name} · ${Math.max(0, Math.ceil(G.activeEvent.time))}s`;
       if (activeRifts > 0) eventText += ` · 裂隙 ${activeRifts}`;
@@ -4746,6 +4942,7 @@ function render() {
   drawSingularities();
   drawLineHazards();
   drawHazards();
+  drawSafeZones();
   drawGems();
   drawEnemies();
   drawMoons();
@@ -6719,6 +6916,95 @@ function drawPlanetAbilityEffects() {
   }
 }
 
+function drawSafeZones() {
+  if (!G.safeZones.length) return;
+  ctx.save();
+  for (const zone of G.safeZones) {
+    const sx = w2sX(zone.x);
+    const sy = w2sY(zone.y);
+    const remaining = clamp(zone.life / (zone.warning + 1.2), 0, 1);
+    const progress = clamp(zone.elapsed / zone.warning, 0, 1);
+    const safeResult = zone.result === "safe";
+    const hitResult = zone.result === "hit";
+    const color = hitResult ? "255, 84, 102" : "111, 247, 255";
+    const aura = ctx.createRadialGradient(sx, sy, 4, sx, sy, zone.radius);
+    aura.addColorStop(0, `rgba(${color}, ${0.12 + remaining * 0.08})`);
+    aura.addColorStop(0.76, `rgba(${color}, ${0.06 + remaining * 0.06})`);
+    aura.addColorStop(1, `rgba(${color}, 0)`);
+    ctx.fillStyle = aura;
+    ctx.beginPath();
+    ctx.arc(sx, sy, zone.radius, 0, TAU);
+    ctx.fill();
+
+    ctx.strokeStyle = `rgba(${color}, ${0.5 + remaining * 0.4})`;
+    ctx.lineWidth = zone.resolved ? 2 : 2.6;
+    ctx.setLineDash(zone.resolved ? [] : [12, 8]);
+    ctx.beginPath();
+    ctx.arc(sx, sy, zone.radius, 0, TAU);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (!zone.resolved) {
+      ctx.strokeStyle = "rgba(255, 239, 170, 0.9)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(
+        sx,
+        sy,
+        zone.radius - 5,
+        -Math.PI / 2,
+        -Math.PI / 2 + TAU * progress,
+      );
+      ctx.stroke();
+    }
+
+    const countdown = Math.max(0, zone.warning - zone.elapsed);
+    ctx.fillStyle = safeResult
+      ? "rgba(191, 252, 255, 0.92)"
+      : hitResult
+        ? "rgba(255, 143, 163, 0.9)"
+        : "rgba(240, 254, 255, 0.96)";
+    ctx.font = '700 22px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(
+      safeResult ? "庇护" : hitResult ? "裁决" : `${Math.ceil(countdown)}`,
+      sx,
+      sy,
+    );
+    ctx.font = '600 11px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillText("安全区", sx, sy + 18);
+  }
+
+  const unresolved = G.safeZones.filter((zone) => !zone.resolved);
+  if (unresolved.length > 0) {
+    const pulse = 0.55 + Math.sin(G.time * 9) * 0.2;
+    ctx.strokeStyle = `rgba(255, 68, 92, ${0.36 + pulse * 0.24})`;
+    ctx.lineWidth = 12;
+    ctx.strokeRect(5, 5, W - 10, H - 10);
+    const danger = ctx.createRadialGradient(
+      W / 2,
+      H / 2,
+      Math.min(W, H) * 0.24,
+      W / 2,
+      H / 2,
+      Math.max(W, H) * 0.7,
+    );
+    danger.addColorStop(0, "rgba(255, 32, 72, 0)");
+    danger.addColorStop(1, `rgba(255, 32, 72, ${0.09 + pulse * 0.08})`);
+    ctx.fillStyle = danger;
+    ctx.fillRect(0, 0, W, H);
+    const waveText = `第 ${G.safeZoneWaveNumber}/${G.safeZoneTotalWaves} 波 · ${Math.ceil(
+      Math.max(0, unresolved[0].warning - unresolved[0].elapsed),
+    )} 秒后裁定`;
+    ctx.font = '700 15px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = `rgba(255, 224, 226, ${0.82 + pulse * 0.12})`;
+    ctx.textAlign = "center";
+    ctx.fillText(waveText, W / 2, H * 0.18);
+  }
+  ctx.restore();
+}
+
 function drawLineHazards() {
   if (!G.lineHazards.length) return;
   ctx.save();
@@ -7121,6 +7407,8 @@ window.__starGame = {
       spaceStation: G.player.spaceStationLevel,
       missileBullets: G.bullets.filter((bullet) => bullet.missile).length,
       satelliteLasers: G.satelliteLaserVisuals.length,
+      satelliteMissiles: G.player.satelliteMissiles,
+      satelliteLaserShots: G.player.satelliteLaserShots,
       level: G.level,
       xp: G.xp,
       xpNext: G.xpNext,
@@ -7160,6 +7448,8 @@ window.__starGame = {
       eventTime: G.activeEvent ? Math.round(G.activeEvent.time * 10) / 10 : 0,
       meteorWave: G.meteorWave,
       lineHazards: G.lineHazards.length,
+      safeZones: G.safeZones.length,
+      safeZoneWavesRemaining: G.safeZoneWavesRemaining,
       riftEnemies: G.riftEnemies.filter((rift) => !rift.dead).length,
       flarePulses: G.flarePulsesRemaining,
       tide: Math.round(G.tideTimer),
@@ -7245,6 +7535,9 @@ window.__starGame = {
   deadline() {
     if (G && state === "playing") triggerEvent("deadline");
   },
+  safeZone() {
+    if (G && state === "playing") triggerEvent("safeZone");
+  },
   meteor() {
     if (G && state === "playing") triggerEvent("meteor");
   },
@@ -7273,6 +7566,11 @@ window.__starGame = {
       elite.hp *= 1.8;
       elite.maxHp = elite.hp;
       elite.r = 36;
+    }
+  },
+  addSatellite() {
+    if (G && state === "playing" && G.player.planetId === "earth") {
+      addSatellite();
     }
   },
   laserShot() {
@@ -7383,6 +7681,7 @@ if (new URLSearchParams(location.search).has("debug")) {
     ["Release", "gravity", false],
     ["Event", "event", undefined],
     ["Deadline", "deadline", undefined],
+    ["Safe Zones", "safeZone", undefined],
     ["Meteors", "meteor", undefined],
     ["Flare", "flare", undefined],
     ["Rift", "rift", undefined],
