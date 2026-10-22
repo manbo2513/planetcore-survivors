@@ -24,7 +24,7 @@
 
 ## 启动
 
-**Windows 一键启动：** 双击 `play.bat`，浏览器会自动打开游戏。
+**Windows 一键启动：** 双击 `play.bat`，浏览器会自动打开游戏。启动器不需要安装 Node，找不到 Node 时会自动使用 Windows 自带的 PowerShell 提供本地网页服务。
 
 **手动启动：**
 
